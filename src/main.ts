@@ -521,7 +521,9 @@ export default class LanguageToolPlugin extends Plugin {
         const selection = editor.state.selection.main;
         if (!range && !selection.empty) range = { ...selection };
 
-        const text = editor.state.sliceDoc();
+        const state = editor.state;
+        const currentDoc = state.doc;
+        const text = state.sliceDoc(); // handles line endings
         if (!text.trim()) return false;
 
         let matches: (api.LTMatch & { range: api.LTRange })[];
@@ -558,6 +560,10 @@ export default class LanguageToolPlugin extends Plugin {
             this.setStatusBarReady();
             if (longNotice) longNotice.hide();
         }
+
+        // Avoid updating the underlines if the document has changed
+        // As the codemirror state is immutable, we can directly compare the text objects
+        if (currentDoc !== editor.state.doc) return true;
 
         const effects: StateEffect<any>[] = [];
 
