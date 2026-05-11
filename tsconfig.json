@@ -8,11 +8,11 @@
     "target": "es2022",
     "allowJs": false,
     "noImplicitAny": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "importHelpers": true,
     "strictNullChecks": true,
     "allowSyntheticDefaultImports": true,
     "lib": ["dom", "scripthost", "ES2022"]
   },
-  "include": ["**/*.ts", "jest.config.mts"]
+  "include": ["**/*.ts", "scripts/**/*.ts", "version-bump.ts"]
 }

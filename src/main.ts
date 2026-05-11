@@ -4,7 +4,13 @@ import { ChangeSpec, StateEffect } from "@codemirror/state";
 import { endpointFromUrl, LTOptions, LTSettings, LTSettingsTab, SUGGESTIONS } from "./settings";
 import * as api from "api";
 import { underlineExtension } from "./editor/extension";
-import { addUnderline, clearAllUnderlines, clearMatchingUnderlines, clearUnderlinesInRange, underlineDecoration } from "./editor/underlines";
+import {
+    addUnderline,
+    clearAllUnderlines,
+    clearMatchingUnderlines,
+    clearUnderlinesInRange,
+    underlineDecoration,
+} from "./editor/underlines";
 import { cmpIgnoreCase, setDifference, setIntersect, setUnion } from "./helpers";
 import * as markdown from "./markdown/parser";
 
@@ -57,8 +63,7 @@ export default class LanguageToolPlugin extends Plugin {
         this.registerMenuItems();
 
         // Configure frontmatter suggestions
-        if (this.settings.options.injectProperties)
-            this.injectProperties(true);
+        if (this.settings.options.injectProperties) this.injectProperties(true);
 
         // Spellcheck Dictionary
         const dictionary: Set<string> = new Set(
@@ -521,10 +526,13 @@ export default class LanguageToolPlugin extends Plugin {
 
         let matches: (api.LTMatch & { range: api.LTRange })[];
         let longNotice: Notice | undefined = undefined;
+        let syntax: markdown.SyntaxTree;
         try {
             this.setStatusBarWorking();
 
-            let { offset, annotations } = await markdown.parseAndAnnotate(text, range);
+            syntax = new markdown.SyntaxTree(text);
+
+            let { offset, annotations } = syntax.annotate(range);
             // reduce request size
             offset += annotations.optimize();
             if (annotations.length() === 0) return false;
@@ -569,6 +577,19 @@ export default class LanguageToolPlugin extends Plugin {
                 // Ignore typos that are in the spellcheck dictionary
                 if (match.categoryId === "TYPOS" && spellcheckDictionary.includes(match.text))
                     continue;
+
+                // Ignore whitespace lints inside tables
+                if (
+                    match.categoryId === "WHITESPACE" &&
+                    (syntax.isInside(match.range.from, "table") ||
+                        syntax.isInside(match.range.to, "table"))
+                )
+                    continue;
+
+                // TODO: LanguageTool's ranges often include whitespace before/after lints.
+                // As whitespace is used to hide markdown markup, applying these lints often breaks the format of
+                // for example paragraphs, lists, or tables.
+
                 effects.push(addUnderline.of(match));
             }
         }

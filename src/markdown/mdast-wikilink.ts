@@ -1,6 +1,5 @@
 import { CompileContext, Extension, Token } from "mdast-util-from-markdown";
 import { Node, Parent } from "mdast";
-import { Fragment } from "mdast-util-from-markdown/lib/types";
 
 declare module "mdast" {
     interface RootContentMap {
@@ -10,10 +9,12 @@ declare module "mdast" {
 
 interface WikiLink extends Parent {
     type: "wikiLink";
-    data?: {
-        value: string;
-        link: string;
-    };
+    data?: { value: string; link: string };
+}
+
+interface Fragment {
+    type: "fragment";
+    // ...
 }
 
 export function wikiLinkFromMarkdown(opts: object = {}): Extension {
@@ -21,10 +22,7 @@ export function wikiLinkFromMarkdown(opts: object = {}): Extension {
     let node: WikiLink;
 
     function enterWikiLink(this: CompileContext, token: Token): void {
-        node = {
-            type: "wikiLink",
-            children: [],
-        };
+        node = { type: "wikiLink", children: [] };
         this.enter(node, token);
     }
 
@@ -37,19 +35,9 @@ export function wikiLinkFromMarkdown(opts: object = {}): Extension {
     function exitWikiLinkTarget(this: CompileContext, token: Token) {
         const target = this.sliceSerialize(token);
         const current = top(this.stack);
-        current.data = {
-            value: target,
-            link: resolveLink(target),
-        };
+        current.data = { value: target, link: resolveLink(target) };
         current.children = [
-            {
-                type: "text",
-                value: target,
-                position: {
-                    start: token.start,
-                    end: token.end,
-                },
-            },
+            { type: "text", value: target, position: { start: token.start, end: token.end } },
         ];
     }
 
@@ -58,14 +46,7 @@ export function wikiLinkFromMarkdown(opts: object = {}): Extension {
         const current = top(this.stack);
         if (current.data != null) current.data.value = alias;
         current.children = [
-            {
-                type: "text",
-                value: alias,
-                position: {
-                    start: token.start,
-                    end: token.end,
-                },
-            },
+            { type: "text", value: alias, position: { start: token.start, end: token.end } },
         ];
     }
 
@@ -74,9 +55,7 @@ export function wikiLinkFromMarkdown(opts: object = {}): Extension {
     }
 
     return {
-        enter: {
-            wikiLink: enterWikiLink,
-        },
+        enter: { wikiLink: enterWikiLink },
         exit: {
             wikiLinkTarget: exitWikiLinkTarget,
             wikiLinkAlias: exitWikiLinkAlias,

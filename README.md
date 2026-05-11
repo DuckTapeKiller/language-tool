@@ -69,5 +69,5 @@ Configure your email, API key, and the new URL (https://api.languagetoolplus.com
 
 ## Manually Installing the Plugin
 
-- Run `yarn install` and `yarn build` in the root directory of the repository.
+- Run `bun install` and `bun run build` in the root directory of the repository.
 - Copy over `main.js`, `styles.css`, `manifest.json` from the latest release to your vault `VaultFolder/.obsidian/plugins/languagetool/`.

@@ -1,4 +1,4 @@
-import type { RootContent, BlockContent, Text } from "mdast";
+import type { RootContent, BlockContent, Text, Root } from "mdast";
 
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfm } from "micromark-extension-gfm";
@@ -13,27 +13,53 @@ import * as api from "../api";
 
 const ESCAPE = /\\[!"#$%&'()*+,\-.\/:;<=>?@\[\\\]^_`{|}~]/g;
 
-export async function parseAndAnnotate(
-    text: string,
-    range?: api.LTRange
-): Promise<{ offset: number; annotations: AnnotatedText }> {
-    const tree = fromMarkdown(text, {
-        extensions: [gfm(), frontmatter(["yaml"]), wikiLink({ aliasDivider: "|" })],
-        mdastExtensions: [
-            gfmFromMarkdown(),
-            frontmatterFromMarkdown(["yaml"]),
-            wikiLinkFromMarkdown(),
-        ],
-    });
+export class SyntaxTree {
+    #raw: string;
+    #tree: Root;
 
-    const annotator = new AnnotationVisitor(text, range);
-    try {
-        tree.children.forEach(child => annotator.visitRoot(child));
-    } catch (e) {
-        console.error("Error while parsing markdown:\n", JSON.stringify(tree, undefined, "  "));
-        throw e;
+    constructor(text: string) {
+        this.#raw = text;
+        this.#tree = fromMarkdown(text, {
+            extensions: [gfm(), frontmatter(["yaml"]), wikiLink({ aliasDivider: "|" })],
+            mdastExtensions: [
+                gfmFromMarkdown(),
+                frontmatterFromMarkdown(["yaml"]),
+                wikiLinkFromMarkdown(),
+            ],
+        });
     }
-    return { offset: annotator.output_start ?? 0, annotations: annotator.output };
+
+    annotate(range?: api.LTRange): { offset: number; annotations: AnnotatedText } {
+        const annotator = new AnnotationVisitor(this.#raw, range);
+        try {
+            this.#tree.children.forEach(child => annotator.visitRoot(child));
+        } catch (e) {
+            console.error(
+                "Error while parsing markdown:\n",
+                JSON.stringify(this.#tree, undefined, "  "),
+            );
+            throw e;
+        }
+        return { offset: annotator.output_start ?? 0, annotations: annotator.output };
+    }
+
+    isInside(cursor: number, nodeType: string): boolean {
+        function visit(child: RootContent): boolean {
+            const startOffset = child?.position?.start.offset;
+            const endOffset = child?.position?.end.offset;
+            if (startOffset == null || endOffset == null) {
+                throw Error("Markdown parsing: unknown position for text node");
+            }
+            if (startOffset <= cursor && cursor < endOffset) {
+                if (child.type === nodeType) {
+                    return true;
+                }
+                if ("children" in child) return child.children.some(c => visit(c));
+            }
+            return false;
+        }
+        return this.#tree.children.some(child => visit(child));
+    }
 }
 
 class AnnotationVisitor {
@@ -66,7 +92,7 @@ class AnnotationVisitor {
                 "Invalid output length",
                 this.output.length(),
                 endOffset,
-                JSON.stringify(node, undefined, "  ")
+                JSON.stringify(node, undefined, "  "),
             );
             throw Error("Markdown parsing: invalid output length");
         }
@@ -87,9 +113,7 @@ class AnnotationVisitor {
             // Skip blocks before the range
             if (endOffset <= this.range.from - 1) return;
             // Skip blocks after the range
-            if (startOffset >= this.range.to + 1) {
-                return;
-            }
+            if (startOffset >= this.range.to + 1) return;
 
             // Block containing start
             if (startOffset <= this.range.from && this.range.from <= endOffset) {

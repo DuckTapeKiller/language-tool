@@ -169,12 +169,5 @@ export function wikiLink(opts: Options = {}): Extension {
             return consumeEnd;
         }
     }
-    return {
-        text: {
-            [codes.leftSquareBracket]: {
-                name: "wikilink",
-                tokenize: tokenize,
-            },
-        },
-    };
+    return { text: { [codes.leftSquareBracket]: { name: "wikilink", tokenize: tokenize } } };
 }

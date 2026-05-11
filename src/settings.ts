@@ -25,23 +25,23 @@ export const SUGGESTIONS = 8;
  * so we hardcode the ones from https://languagetool.org/editor/settings/language.
  */
 export const MOTHER_TONGUES: Record<string, string> = {
-    "ar": "Arabic",
-    "ca": "Catalan",
-    "da": "Danish",
-    "de": "German",
-    "en": "English",
-    "es": "Spanish",
-    "fr": "French",
-    "gl": "Galician",
-    "it": "Italian",
-    "ja": "Japanese",
-    "nl": "Dutch",
-    "pl": "Polish",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "sv": "Swedish",
-    "uk": "Ukrainian",
-    "zh": "Chinese",
+    ar: "Arabic",
+    ca: "Catalan",
+    da: "Danish",
+    de: "German",
+    en: "English",
+    es: "Spanish",
+    fr: "French",
+    gl: "Galician",
+    it: "Italian",
+    ja: "Japanese",
+    nl: "Dutch",
+    pl: "Polish",
+    pt: "Portuguese",
+    ru: "Russian",
+    sv: "Swedish",
+    uk: "Ukrainian",
+    zh: "Chinese",
 };
 
 export class Endpoint {
@@ -127,8 +127,8 @@ export interface LTOptions {
     enabledRules?: string;
     disabledRules?: string;
 
-    longCheckNotification: boolean,
-    injectProperties: boolean,
+    longCheckNotification: boolean;
+    injectProperties: boolean;
 }
 
 export const DEFAULT_SETTINGS: LTOptions = {
@@ -418,7 +418,7 @@ export class LTSettingsTab extends PluginSettingTab {
             .setName("Mother tongue")
             .setDesc(
                 "Set mother tongue if you want to be warned about false friends when writing in other languages. " +
-                "This setting will also be used for automatic language detection.",
+                    "This setting will also be used for automatic language detection.",
             )
             .addDropdown(component => {
                 component
@@ -436,7 +436,7 @@ export class LTSettingsTab extends PluginSettingTab {
             .setName("Static language")
             .setDesc(
                 "Set a static language that will always be used" +
-                "(LanguageTool tries to auto detect the language, this is usually not necessary)",
+                    "(LanguageTool tries to auto detect the language, this is usually not necessary)",
             )
             .addDropdown(component => {
                 this.languageListeners.push(async languages => {
@@ -525,7 +525,7 @@ export class LTSettingsTab extends PluginSettingTab {
                 createFragment(frag => {
                     frag.appendText(
                         "The picky mode enables a lot of extra categories and rules. " +
-                        "Additionally, you can enable or disable specific rules down below.",
+                            "Additionally, you can enable or disable specific rules down below.",
                     );
                     frag.createEl("br");
                     frag.createEl("a", {
@@ -540,9 +540,9 @@ export class LTSettingsTab extends PluginSettingTab {
             .setName("Picky mode")
             .setDesc(
                 "Provides more style and tonality suggestions, " +
-                "detects long or complex sentences, " +
-                "recognizes colloquialism and redundancies, " +
-                "proactively suggests synonyms for commonly overused words",
+                    "detects long or complex sentences, " +
+                    "recognizes colloquialism and redundancies, " +
+                    "proactively suggests synonyms for commonly overused words",
             )
             .addToggle(component => {
                 component.setValue(settings.options.pickyMode).onChange(async value => {
@@ -598,8 +598,6 @@ export class LTSettingsTab extends PluginSettingTab {
                     }),
             );
 
-
-
         // ---------------------------------------------------------------------
         // Advanced
         // ---------------------------------------------------------------------
@@ -607,25 +605,23 @@ export class LTSettingsTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("Long check notification")
-            .setDesc("Show the 'Check spelling...' notification when a manual check is taking a long time")
+            .setDesc(
+                "Show the 'Check spelling...' notification when a manual check is taking a long time",
+            )
             .addToggle(component => {
-                component
-                    .setValue(settings.options.longCheckNotification)
-                    .onChange(async value => {
-                        await settings.update({ longCheckNotification: value });
-                    });
+                component.setValue(settings.options.longCheckNotification).onChange(async value => {
+                    await settings.update({ longCheckNotification: value });
+                });
             });
 
         new Setting(containerEl)
             .setName("Inject property types")
             .setDesc("Define the properties for note-specific LanguageTool settings.")
             .addToggle(component => {
-                component
-                    .setValue(settings.options.injectProperties)
-                    .onChange(async value => {
-                        await settings.update({ injectProperties: value });
-                        this.plugin.injectProperties(value);
-                    });
+                component.setValue(settings.options.injectProperties).onChange(async value => {
+                    await settings.update({ injectProperties: value });
+                    this.plugin.injectProperties(value);
+                });
             });
 
         await this.notifyEndpointChange(settings.options);
