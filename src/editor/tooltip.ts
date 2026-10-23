@@ -1,9 +1,9 @@
 import { EditorView, Tooltip, hoverTooltip } from "@codemirror/view";
 import { Extension } from "@codemirror/state";
-import { categoryCssClass } from "../helpers";
+import { categoryCssClass, isSpelling } from "../helpers";
 import { ButtonComponent, setIcon } from "obsidian";
 import { default as LanguageToolPlugin } from "../main";
-import { clearUnderlinesInRange, underlineDecoration, clearMatchingUnderlines } from "./underlines";
+import { clearUnderlinesInRange, underlineDecoration } from "./underlines";
 import * as api from "../api";
 import { SUGGESTIONS } from "../settings";
 
@@ -38,19 +38,13 @@ function createTooltip(
         });
 
         root.createDiv({ cls: "lt-ignore-container" }, container => {
-            if (categoryClass === "lt-major") {
+            if (isSpelling(category, ruleId)) {
                 container.createDiv({ cls: "lt-ignore-btn" }, button => {
                     setIcon(button.createSpan(), "plus-with-circle");
                     button.createSpan({ text: "Add to dictionary" });
-                    button.onclick = async () => {
-                        // Add to global dictionary
-                        let dictionary = new Set(plugin.settings.options.dictionary);
-                        dictionary.add(match.text.trim());
-                        await plugin.settings.update({ dictionary: [...dictionary].sort() });
-                        // Remove other underlines with the same word
-                        view.dispatch({
-                            effects: [clearMatchingUnderlines.of(m => m.text === match.text)],
-                        });
+                    button.onclick = () => {
+                        // Add to global dictionary, removing other underlines with the same word
+                        plugin.addToDictionary(match.text, view).catch(e => console.error(e));
                     };
                 });
             } else {
@@ -64,19 +58,9 @@ function createTooltip(
                     container.createDiv({ cls: "lt-ignore-btn" }, button => {
                         setIcon(button.createSpan(), "circle-off");
                         button.createSpan({ text: "Disable rule" });
-                        button.onclick = async () => {
-                            let disabledRules = new Set(plugin.settings.options.disabledRules);
-                            disabledRules.add(ruleId);
-                            await plugin.settings.update({
-                                disabledRules: [...disabledRules].sort(),
-                            });
-
+                        button.onclick = () => {
                             // Remove other underlines of the same rule
-                            view.dispatch({
-                                effects: [
-                                    clearMatchingUnderlines.of(match => match.ruleId === ruleId),
-                                ],
-                            });
+                            plugin.disableRule(ruleId, view).catch(e => console.error(e));
                         };
                     });
                 }
@@ -85,7 +69,7 @@ function createTooltip(
                 container.createDiv({ cls: "lt-info-button clickable-icon" }, button => {
                     setIcon(button, "info");
                     button.onclick = () => {
-                        const popup = activeDocument.getElementsByClassName("lt-info-box").item(0);
+                        const popup = root.querySelector(".lt-info-box");
                         if (popup) popup.toggleAttribute("hidden");
                     };
                 });
@@ -116,6 +100,7 @@ function lintTooltip(
     let cursor = underlines.iter(pos);
     if (cursor.value != null && cursor.from <= pos && cursor.to >= pos) {
         let match = (cursor.value.spec as { underline: api.LTLint }).underline;
+        const range = { from: cursor.from, to: cursor.to };
         return {
             pos: cursor.from,
             end: cursor.to,
@@ -123,7 +108,7 @@ function lintTooltip(
             strictSide: false,
             arrow: false,
             clip: false,
-            create: view => ({ dom: createTooltip(plugin, view, match, cursor) }),
+            create: view => ({ dom: createTooltip(plugin, view, match, range) }),
         };
     }
     return null;

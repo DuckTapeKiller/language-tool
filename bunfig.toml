@@ -2,3 +2,7 @@
 # Only install package versions published at least 3 days ago
 minimumReleaseAge = 259200 # seconds
 minimumReleaseAgeExcludes = ["@types/bun", "bun-types", "typescript"]
+
+[test]
+# Replace the runtime values of the obsidian package, which only ships type definitions
+preload = ["./src/test/obsidian-stub.ts"]

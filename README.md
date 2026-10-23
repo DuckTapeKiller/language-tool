@@ -1,73 +1,106 @@
-# Obsidian LanguageTool Plugin
+# Language Tool
 
-This plugin for [Obsidian.md](https://obsidian.md) integrates [LanguageTool](https://languagetool.org/) to provide advanced grammar and spellchecking.
+Spelling and grammar checking in [Obsidian](https://obsidian.md) with [LanguageTool](https://languagetool.org/), on your own LanguageTool server or on LanguageTool's public and Premium servers.
 
 <img src="demos/image.png" style="border:1px solid black" />
 
-> This is a fork of the original [obsidian-languagetool-plugin](https://github.com/Clemens-E/obsidian-languagetool-plugin), with the following changes:
->
-> - Support for synonyms and mother tongue
-> - Tooltip button for disabling rules
-> - Note-specific settings
-> - Clean up the codebase, and fix multiple bugs and freezes
+Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/obsidian-languagetool) by Lars Wrenger, which is a fork of [obsidian-languagetool-plugin](https://github.com/Clemens-E/obsidian-languagetool-plugin) by Clemens Ertle. See [Credits and licence](#credits-and-licence).
 
-**Note:** if you are worried about the privacy of your notes, you should self-host LanguageTool locally on your PC or on a server.
-If you decide to self-host the service, you must change the link in the configuration accordingly.
+## Changes from the original
+
+- **Preferred languages.** Auto detection can be told which languages you write in, so a short paragraph with a typo is no longer checked as German, Slovenian or Esperanto.
+- **A language for each paragraph.** With your own server, every paragraph can be checked in its own language, so a note can mix English and Spanish, for example.
+- A note language given without a variety (`lt-language: en`) is checked in the variety chosen in the settings. Before, it silently turned off spell checking.
+- Long notes are checked in parts, so they no longer fail on the public server's limit of 20,000 characters per request.
+- Auto-check keeps a separate state for every open note. Before, editing two notes in quick succession could leave the first unchecked and check the second at the wrong positions.
+- Text edited while a check is running is checked again once the check has finished.
+- Choosing a suggestion from the right-click menu replaces the right word.
+- "Accept all suggestions" skips suggestions that overlap another one, instead of garbling the text.
+- "Add to dictionary" works for every kind of spelling match and always syncs with LanguageTool Premium, from the tooltip, the menu and the command.
+- A note's `lt-dictionary` adds to your ignored words instead of replacing them.
+- Changing the server loads the language list from the new server, once you have stopped typing.
+- Loading the language list and syncing the dictionary no longer delay starting Obsidian.
+- The synonyms setting says that synonyms are looked up on LanguageTool's servers, even when you use your own.
 
 ## Installation
 
-1. In Obsidian, under Settings / Community plugins, turn off "Safe mode" (read the safety warning).
-2. Click the Browse button for Community plugins.
-3. In the top-left search field, search for "LanguageTool". Click the Install button.
-4. After the installation is successful, click Enable to enable the plugin.
+Language Tool is not in the community plugin list. To install it, build it from source:
 
-## Setting Up & Use Case
+1. Install [Bun](https://bun.sh), then run `bun install` and `bun run build` in this repository.
+2. Copy `main.js`, `styles.css` and `manifest.json` into `VaultFolder/.obsidian/plugins/language-tool/`.
+3. In Obsidian, enable Language Tool under Settings → Community plugins.
 
-After installing and enabling the plugin, you can set up hotkeys (under Settings / Hotkeys), which can be found under the description "LanguageTool" through the Filter search field, to find specific hotkey functions quicker. Ensure no conflict exists with existing hotkeys and the spellcheck function within Obsidian if enabled (`Settings / Editor / Spellcheck ON/OFF`).
+## Usage
 
-- **"Check Text"** checks the whole document in view if no text is selected. If you want to check only a word, sentence, or paragraph, select the text of choice and press the keyboard shortcut you have previously set. Click on the red underlined word that LanguageTool identified as a possible spelling mistake to get corrective suggestions in a popover window, with the option to add the word to a personal dictionary.
-- **"Clear Suggestions"** clears the document or selected text of all red underlines from words or passages that were not corrected or changed.
-- **"Toggle Automatic Checking"** toggles ON/OFF the automatic spellchecking function as you write or change the document's contents.
+Hotkeys for the commands can be set under Settings → Hotkeys; search for "Language Tool". Make sure they do not clash with existing hotkeys. You may want to turn off Obsidian's own spellcheck (Settings → Editor → Spellcheck).
 
-**LanguageTool tries to auto-detect the language used.** Selecting a specific language (under `Settings / LanguageTool / Static language`) usually is not necessary. This feature enables the user to spellcheck in different languages within the same document (e.g., a dissertation written in English with quotes in a foreign language), which is ordinarily not possible with the built-in spellcheck function of Obsidian.
+- **Check text** checks the whole note, or only the selected text. Underlined words show suggestions when you hover over them, with the option to add the word to your dictionary or to disable the rule.
+- **Clear suggestions** removes all underlines.
+- **Toggle automatic checking** turns checking as you type on or off.
+- **Accept all suggestions** applies the first suggestion of every underline.
 
-**Custom Spellchecker Dictionary:** You can add words to this dictionary directly from the editor and remove them again in the Obsidian settings (`Settings / LanguageTool / Spellcheck Dictionary`).
+LanguageTool detects the language of the text it checks unless you choose a static language under Settings → Language Tool → Static language. It detects one language for each request: "Check text" sends the whole note, and automatic checking sends the paragraphs you have just edited.
 
-## Note-Specific Configuration
+### Preferred languages
 
-You can overwrite various configuration options in notes.
-This allows you to customize LanguageTool for a specific note.
-The following settings can be in the note's properties:
+Detection only sees the text being checked, so a short paragraph with a typo is sometimes detected as an unrelated language ("Teh hous" as Slovenian, for example). Under Settings → Language Tool → Preferred languages, add the languages you write in, and detection will favour them. Text that is clearly in another language is still detected as such.
+
+"Only use these languages" checks everything as one of the preferred languages. It stops detection mistakes completely, but quotations in other languages are then marked as errors.
+
+### A language for each paragraph
+
+As a note is checked in one language, a note that mixes languages has the paragraphs in the other language marked as errors. "Detect the language of each paragraph" checks every paragraph, heading and list item in a separate request, so each gets its own language. A phrase in another language inside a paragraph is still checked in the paragraph's language. Short paragraphs are easily misdetected, so use it together with preferred languages.
+
+It sends one request per paragraph, which the public and Premium servers would refuse, so it is only available with your own server.
+
+### Ignored words
+
+Words can be added to the dictionary from the editor and removed again under Settings → Language Tool → Spellcheck dictionary.
+
+## Note-specific settings
+
+These properties override the settings for one note:
 
 ```md
 ---
-lt-language: en-US     // text: language code or "auto"
-lt-picky: true         // boolean: Provide more style suggestions
-lt-autoCheck: true     // boolean: Check as you type
-lt-dictionary:         // multitext: Ingored word
+lt-language: en-US     # text: language code or "auto"
+lt-preferredLanguages: # multitext: languages favoured by "auto", replacing the global ones
+  - en
+  - es
+lt-picky: true         # boolean: more style suggestions
+lt-autoCheck: true     # boolean: check as you type
+lt-dictionary:         # multitext: ignored words, added to the global ones
   - foo
   - bar
-lt-disabledRules:      // multitext: Ignored rules
+lt-disabledRules:      # multitext: ignored rules, added to the global ones
   - ARROWS
-lt-disabledCategories: // multitext: Ignored categories
+lt-disabledCategories: # multitext: ignored categories, added to the global ones
   - STYLE
 ---
 
-# Some Note...
+# Some note...
 ```
 
-## Premium Accounts
+## Privacy
 
-We support LanguageTool Premium.
+With the public or Premium server, the text you check is sent to LanguageTool. To keep your notes on your computer, run [your own LanguageTool server](https://dev.languagetool.org/http-server), choose the custom endpoint and set its URL, for example `http://localhost:8081`.
 
-> ⚠️ Please report any bugs, issues, or suggestions related to this plugin to us (this GitHub repository) directly and **_not_** to LanguageTool, as this is an unofficial community plugin.
+"Find synonyms" always uses LanguageTool's servers, whichever server you check with, and sends the sentence around the selected word.
 
-You (obviously) need a premium account and an API key to use the premium features.
-You can generate your API key at <https://languagetool.org/editor/settings/access-tokens>
+## Premium accounts
 
-Configure your email, API key, and the new URL (https://api.languagetoolplus.com) in the plugin settings
+Language Tool supports LanguageTool Premium. You need a Premium account and an API key, which you can create at <https://languagetool.org/editor/settings/access-tokens>. Choose the premium endpoint and enter your email address and API key in the settings.
 
-## Manually Installing the Plugin
+Please report problems with Language Tool in this repository, not to LanguageTool or to the original plugin's authors.
 
-- Run `bun install` and `bun run build` in the root directory of the repository.
-- Copy over `main.js`, `styles.css`, `manifest.json` from the latest release to your vault `VaultFolder/.obsidian/plugins/languagetool/`.
+## Development
+
+- `bun run build` runs Obsidian's official ESLint plugin ([eslint-plugin-obsidianmd](https://github.com/obsidianmd/eslint-plugin)) on every source file, the scripts, the tests and `package.json`, and stops at the first warning. It then type-checks and builds `main.js`.
+- `bun run lint` runs the linter on its own.
+- `bun test` runs the tests. The tests in `src/test/server.test.ts` need a LanguageTool server at `http://localhost:8081`, or the one given in `LT_SERVER`, and are skipped when none is reachable.
+
+## Credits and licence
+
+Language Tool is based on the work of Lars Wrenger ([obsidian-languagetool](https://github.com/wrenger/obsidian-languagetool)), Clemens Ertle ([obsidian-languagetool-plugin](https://github.com/Clemens-E/obsidian-languagetool-plugin)), Matthew Meyers and the other contributors to those projects, whose commits are kept in this repository's history.
+
+Like the original, it is free software under the [GNU Affero General Public License version 3](LICENSE.md), or any later version.

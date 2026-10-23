@@ -1,4 +1,4 @@
-import { endpointFromUrl, LTOptions } from "./settings";
+import { endpointFromUrl, getEndpoint, LTOptions } from "./settings";
 import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
 import { AnnotatedText } from "./annotated";
@@ -28,17 +28,28 @@ export interface LTLint extends LTMatch {
 type JsonValue = string | number | boolean | { [x: string]: JsonValue } | JsonValue[] | null;
 
 /**
- * The main function of LanguageTool, checking text for spell/grammar errors.
+ * The language to check in. Spell checking only works with a variety (e.g. "en-GB", not "en"),
+ * so base languages are mapped to the configured variety.
  */
-export async function check(
+export function resolveLanguage(options: Readonly<LTOptions>): string {
+    const lang = options.staticLanguage.trim();
+    if (!lang || lang.toLowerCase() === "auto") return "auto";
+    return options.languageVariety[lang.toLowerCase()] ?? lang;
+}
+
+/** LanguageTool only accepts preferred languages without variety (e.g. "en", not "en-GB") */
+export function baseLanguageCodes(codes: readonly string[]): string[] {
+    const base = codes.map(code => code.trim().split(/[-_]/)[0].toLowerCase()).filter(Boolean);
+    return [...new Set(base)];
+}
+
+/** The form parameters of a check request */
+export function checkParams(
     options: Readonly<LTOptions>,
     apiKey: string | null,
-    offset: number,
-    annotated: AnnotatedText,
-): Promise<LTLint[]> {
-    const data = annotated.stringify();
-
-    const lang = options.staticLanguage || "auto";
+    data: string,
+): Record<string, string> {
+    const lang = resolveLanguage(options);
     const params: { [key: string]: string } = {
         data,
         language: lang,
@@ -56,13 +67,67 @@ export async function check(
     if (options.enabledRules.length) params.enabledRules = options.enabledRules.join(",");
     if (options.disabledRules.length) params.disabledRules = options.disabledRules.join(",");
 
-    if (lang == "auto") params.preferredVariants = Object.values(options.languageVariety).join(",");
+    if (lang == "auto") {
+        params.preferredVariants = Object.values(options.languageVariety).join(",");
+        // Without hints, short snippets are often detected as unrelated languages
+        const preferred = baseLanguageCodes(options.preferredLanguages);
+        if (preferred.length) {
+            params.preferredLanguages = preferred.join(",");
+            if (options.forcePreferredLanguages) params.forcePreferredLanguages = "true";
+        }
+    }
 
     const endpointType = endpointFromUrl(options.serverUrl);
     if (endpointType !== "public" && apiKey && options.username) {
         params.username = options.username;
         params.apiKey = apiKey;
     }
+    return params;
+}
+
+export interface CheckRequest {
+    /// Offset of the text in the note
+    offset: number;
+    text: AnnotatedText;
+}
+
+/**
+ * Divide the text to check into requests. Long notes are checked in parts, as the servers
+ * limit the size of a request. LanguageTool detects one language per request, so to mix
+ * languages every paragraph can be checked separately, which is only allowed on your own server.
+ */
+export function planRequests(
+    options: Readonly<LTOptions>,
+    offset: number,
+    annotated: AnnotatedText,
+): { requests: CheckRequest[]; parallel: number } {
+    const maxSize = getEndpoint(options.serverUrl).maxSize;
+    const perParagraph =
+        options.paragraphLanguages &&
+        resolveLanguage(options) === "auto" &&
+        endpointFromUrl(options.serverUrl) === "custom";
+    const parts = perParagraph
+        ? annotated.paragraphs().flatMap(p => p.split(maxSize))
+        : annotated.split(maxSize);
+
+    const requests: CheckRequest[] = [];
+    for (const text of parts) {
+        if (text.hasText()) requests.push({ offset, text });
+        offset += text.length();
+    }
+    return { requests, parallel: perParagraph ? 4 : 1 };
+}
+
+/**
+ * The main function of LanguageTool, checking text for spell/grammar errors.
+ */
+export async function check(
+    options: Readonly<LTOptions>,
+    apiKey: string | null,
+    offset: number,
+    annotated: AnnotatedText,
+): Promise<LTLint[]> {
+    const params = checkParams(options, apiKey, annotated.stringify());
 
     const res = await requestUrlChecked({
         url: `${options.serverUrl}/v2/check`,

@@ -1,14 +1,10 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import * as Bun from "bun";
 
-const tsc = spawnSync("tsc", ["--noEmit"], { stdio: "inherit" });
-if (tsc.status !== 0) {
-    process.exit(tsc.status ?? 1);
-}
+const tsc = Bun.spawnSync(["tsc", "--noEmit"], { stdout: "inherit", stderr: "inherit" });
+if (tsc.exitCode !== 0) throw new Error(`Type check failed (exit code ${tsc.exitCode})`);
 
-const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+const pkg = (await Bun.file("package.json").json()) as { version: string };
 const version = pkg.version;
 
 const externals = [
@@ -35,5 +31,5 @@ await Bun.build({
     sourcemap: false,
     external: externals,
     naming: "main.js",
-    banner: `/* Obsidian LanguageTool v${version} */`,
+    banner: `/* Language Tool v${version} */`,
 });

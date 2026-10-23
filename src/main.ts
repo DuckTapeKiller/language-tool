@@ -2,6 +2,7 @@ import {
     App,
     Command,
     Editor,
+    editorInfoField,
     MarkdownView,
     Menu,
     Notice,
@@ -9,9 +10,10 @@ import {
     PluginManifest,
     setIcon,
     setTooltip,
+    TFile,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
-import { ChangeSpec, StateEffect } from "@codemirror/state";
+import { StateEffect } from "@codemirror/state";
 import { endpointFromUrl, LTOptions, LTSettings, LTSettingsTab, SUGGESTIONS } from "./settings";
 import * as api from "./api";
 import { underlineExtension } from "./editor/extension";
@@ -22,14 +24,23 @@ import {
     clearUnderlinesInRange,
     underlineDecoration,
 } from "./editor/underlines";
-import { cmpIgnoreCase, setDifference, setIntersect, setUnion } from "./helpers";
+import {
+    cmpIgnoreCase,
+    isSpelling,
+    nonOverlapping,
+    setDifference,
+    setIntersect,
+    setUnion,
+} from "./helpers";
 import * as markdown from "./markdown/parser";
+import { applyNoteSettings } from "./noteSettings";
 
 export default class LanguageToolPlugin extends Plugin {
     public settings: LTSettings;
     private statusBarItem?: HTMLElement;
 
-    private isLoading = false;
+    /// Number of checks in progress, shown in the status bar
+    private runningChecks = 0;
 
     public logs: string[] = [];
     private settingTab: LTSettingsTab;
@@ -47,7 +58,6 @@ export default class LanguageToolPlugin extends Plugin {
     public async onload(): Promise<void> {
         // Settings
         await this.settings.load();
-        await this.settingTab.load();
         this.addSettingTab(this.settingTab);
 
         // Status bar
@@ -73,19 +83,24 @@ export default class LanguageToolPlugin extends Plugin {
         );
         dictionary.delete("");
         await this.settings.update({ dictionary: [...dictionary].sort(cmpIgnoreCase) });
-        // Sync with language tool
-        await this.syncDictionary();
+
+        // Network requests should not delay starting Obsidian
+        this.app.workspace.onLayoutReady(() => {
+            this.settingTab.load().catch(e => console.error(e));
+            this.syncDictionary().catch(e => console.error(e));
+        });
     }
 
     public onunload() {
         this.logs = [];
-        this.isLoading = false;
+        this.runningChecks = 0;
     }
 
     // Configure frontmatter suggestions
     public injectProperties(inject: boolean) {
         const properties = {
             "lt-language": "text",
+            "lt-preferredLanguages": "multitext",
             "lt-picky": "checkbox",
             "lt-autoCheck": "checkbox",
             "lt-dictionary": "multitext",
@@ -153,17 +168,20 @@ export default class LanguageToolPlugin extends Plugin {
             editorCallback: editor => {
                 // @ts-expect-error, not typed
                 const editorView = editor.cm as EditorView;
-                const changes: ChangeSpec[] = [];
-                const effects: StateEffect<api.LTRange>[] = [];
+                let changes: { from: number; to: number; insert: string }[] = [];
                 editorView.state
                     .field(underlineDecoration)
                     .between(0, Infinity, (from, to, value) => {
                         let underline = (value.spec as { underline?: api.LTLint }).underline;
                         if (underline?.replacements?.length) {
                             changes.push({ from, to, insert: underline.replacements[0] });
-                            effects.push(clearUnderlinesInRange.of({ from, to }));
                         }
                     });
+                // Overlapping suggestions cannot all be applied; the others stay underlined
+                changes = nonOverlapping(changes);
+                const effects = changes.map(({ from, to }) =>
+                    clearUnderlinesInRange.of({ from, to }),
+                );
                 editorView.dispatch({ changes, effects });
             },
         });
@@ -212,21 +230,11 @@ export default class LanguageToolPlugin extends Plugin {
                 const editorView = editor.cm as EditorView;
 
                 let match = singleMatchAtCursor(editor, 0);
-                if (!match) return checking ? false : undefined;
+                if (!match || !isSpelling(match.categoryId, match.ruleId))
+                    return checking ? false : undefined;
                 if (checking) return true;
 
-                editorView.dispatch({
-                    effects: [clearMatchingUnderlines.of(m => m.text == match.text)],
-                });
-
-                let dictionary = [...this.settings.options.dictionary, match.text.trim()];
-                this.settings.update({ dictionary }).then(
-                    () => {},
-                    e => {
-                        console.error(e);
-                        this.pushLogs(e as Error);
-                    },
-                );
+                this.addToDictionary(match.text, editorView).catch(e => console.error(e));
             },
         });
     }
@@ -292,7 +300,13 @@ export default class LanguageToolPlugin extends Plugin {
                 item.setSection("spellcheck");
                 // @ts-expect-error, not typed
                 const submenu = (item as { setSubmenu: () => Menu }).setSubmenu();
-                this.populateSuggestionSubmenu(submenu, match, cursor, editor);
+                // Copy the range, as the cursor moves on before a menu item is clicked
+                this.populateSuggestionSubmenu(
+                    submenu,
+                    match,
+                    { from: cursor.from, to: cursor.to },
+                    editor,
+                );
             });
             cursor.next();
         }
@@ -336,18 +350,12 @@ export default class LanguageToolPlugin extends Plugin {
 
         submenu.addSeparator();
 
-        if (match.categoryId === "TYPOS") {
+        if (isSpelling(match.categoryId, match.ruleId)) {
             submenu.addItem(subItem => {
                 subItem.setTitle("Add to dictionary");
                 subItem.setIcon("plus-with-circle");
-                subItem.onClick(async () => {
-                    let dict = [...this.settings.options.dictionary, match.text.trim()];
-                    dict.sort(cmpIgnoreCase);
-                    await this.settings.update({ dictionary: dict });
-                    await this.syncDictionary();
-                    editor.dispatch({
-                        effects: [clearMatchingUnderlines.of(m => m.text === match.text)],
-                    });
+                subItem.onClick(() => {
+                    this.addToDictionary(match.text, editor).catch(e => console.error(e));
                 });
             });
         } else {
@@ -363,14 +371,8 @@ export default class LanguageToolPlugin extends Plugin {
                 submenu.addItem(subItem => {
                     subItem.setTitle("Disable rule");
                     subItem.setIcon("circle-off");
-                    subItem.onClick(async () => {
-                        let disabledRules = [...this.settings.options.disabledRules, match.ruleId];
-                        disabledRules.sort(cmpIgnoreCase);
-                        await this.settings.update({ disabledRules });
-
-                        editor.dispatch({
-                            effects: [clearMatchingUnderlines.of(m => m.ruleId === match.ruleId)],
-                        });
+                    subItem.onClick(() => {
+                        this.disableRule(match.ruleId, editor).catch(e => console.error(e));
                     });
 
                     // @ts-expect-error, not typed
@@ -437,16 +439,18 @@ export default class LanguageToolPlugin extends Plugin {
         return true;
     }
 
+    /** Mark a check as finished; the status bar shows ready once no other check is running */
     public setStatusBarReady() {
-        this.isLoading = false;
-        if (this.statusBarItem) setIcon(this.statusBarItem, "spell-check");
+        this.runningChecks = Math.max(0, this.runningChecks - 1);
+        if (this.runningChecks === 0 && this.statusBarItem)
+            setIcon(this.statusBarItem, "spell-check");
     }
 
+    /** Mark a check as started */
     public setStatusBarWorking() {
-        if (this.isLoading) return;
-
-        this.isLoading = true;
-        if (this.statusBarItem) setIcon(this.statusBarItem, "sync-small");
+        this.runningChecks += 1;
+        if (this.runningChecks === 1 && this.statusBarItem)
+            setIcon(this.statusBarItem, "sync-small");
     }
 
     private handleStatusBarClick() {
@@ -497,47 +501,38 @@ export default class LanguageToolPlugin extends Plugin {
             .showAtPosition({ x: statusBarIconRect.right + 5, y: (statusBarRect?.top || 0) - 5 });
     }
 
+    /** The file shown in an editor, which is not always the active file (e.g. in a hover popover) */
+    public editorFile(editor: EditorView): TFile | null {
+        return (
+            editor.state.field(editorInfoField, false)?.file ?? this.app.workspace.getActiveFile()
+        );
+    }
+
     /**
-     * Get the settings for the current file, where values might be reconfigured in the frontmatter.
+     * Get the settings for a file, where values might be reconfigured in the frontmatter.
      */
-    public getActiveFileSettings(): LTOptions {
-        const file = this.app.workspace.getActiveFile();
+    public getFileSettings(file: TFile | null): Readonly<LTOptions> {
         const cache = file && this.app.metadataCache.getFileCache(file);
+        return applyNoteSettings(this.settings.options, cache?.frontmatter);
+    }
 
-        // /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-        if (cache?.frontmatter != null) {
-            const language: unknown =
-                cache.frontmatter["lt-language"] ?? cache.frontmatter["lt_language"];
-            const picky: unknown = cache.frontmatter["lt-picky"];
-            const autoCheck: unknown = cache.frontmatter["lt-autoCheck"];
-            const dictionary: unknown = cache.frontmatter["lt-dictionary"];
-            const disabledRules: unknown = cache.frontmatter["lt-disabledRules"];
-            const disabledCategories: unknown = cache.frontmatter["lt-disabledCategories"];
+    /** Add a word to the dictionary and remove its underlines */
+    public async addToDictionary(word: string, editor?: EditorView): Promise<void> {
+        const text = word.trim();
+        if (!text) return;
+        const dictionary = new Set(this.settings.options.dictionary);
+        dictionary.add(text);
+        await this.settings.update({ dictionary: [...dictionary].sort(cmpIgnoreCase) });
+        editor?.dispatch({ effects: [clearMatchingUnderlines.of(m => m.text.trim() === text)] });
+        await this.syncDictionary();
+    }
 
-            // Beware: shallow clone
-            let settings = { ...this.settings.options };
-            if (typeof language === "string") settings.staticLanguage = language;
-            if (typeof autoCheck === "boolean") settings.shouldAutoCheck = autoCheck;
-            if (typeof picky === "boolean") settings.pickyMode = picky;
-            if (Array.isArray(dictionary) && dictionary.every(item => typeof item === "string"))
-                settings.dictionary = dictionary;
-            if (
-                Array.isArray(disabledRules) &&
-                disabledRules.every(item => typeof item === "string")
-            )
-                settings.disabledRules = [...settings.disabledRules, ...disabledRules];
-            if (
-                Array.isArray(disabledCategories) &&
-                disabledCategories.every(item => typeof item === "string")
-            )
-                settings.disabledCategories = [
-                    ...settings.disabledCategories,
-                    ...disabledCategories,
-                ];
-            return settings;
-        }
-        // /* eslint-enable @typescript-eslint/no-unsafe-assignment */
-        return this.settings.options;
+    /** Disable a rule and remove its underlines */
+    public async disableRule(ruleId: string, editor?: EditorView): Promise<void> {
+        const disabledRules = new Set(this.settings.options.disabledRules);
+        disabledRules.add(ruleId);
+        await this.settings.update({ disabledRules: [...disabledRules].sort(cmpIgnoreCase) });
+        editor?.dispatch({ effects: [clearMatchingUnderlines.of(m => m.ruleId === ruleId)] });
     }
 
     /**
@@ -548,7 +543,7 @@ export default class LanguageToolPlugin extends Plugin {
         auto: boolean = false,
         range?: api.LTRange,
     ): Promise<boolean> {
-        let settings = this.getActiveFileSettings();
+        let settings = this.getFileSettings(this.editorFile(editor));
 
         const selection = editor.state.selection.main;
         if (!range && !selection.empty) range = { ...selection };
@@ -571,13 +566,26 @@ export default class LanguageToolPlugin extends Plugin {
             offset += annotations.optimize();
             if (annotations.length() === 0) return false;
             // Notification for mobile devices, that do not have the status bar indicator
-            if (settings.longCheckNotification && !auto && annotations.length() > 500)
+            if (settings.longCheckNotification && !auto && annotations.plainLength() > 500)
                 longNotice = new Notice("Checking spelling...", 30000);
 
-            console.debug(`Checking ${annotations.length()} characters...`);
-            // console.debug("Text", JSON.stringify(annotations, undefined, "  "));
+            const { requests, parallel } = api.planRequests(settings, offset, annotations);
+            console.debug(
+                `Checking ${annotations.plainLength()} characters in ${requests.length} requests...`,
+            );
 
-            matches = await api.check(settings, this.settings.getApiKey(), offset, annotations);
+            matches = [];
+            const apiKey = this.settings.getApiKey();
+            for (let i = 0; i < requests.length; i += parallel) {
+                const results = await Promise.all(
+                    requests
+                        .slice(i, i + parallel)
+                        .map(r => api.check(settings, apiKey, r.offset, r.text)),
+                );
+                matches.push(...results.flat());
+                // The results are discarded below if the document has changed
+                if (currentDoc !== editor.state.doc) break;
+            }
             // update range to the checked text
             if (range) range = { from: offset, to: offset + annotations.length() };
         } catch (e) {
@@ -613,7 +621,10 @@ export default class LanguageToolPlugin extends Plugin {
                 // Fixes a bug where the match is outside the document
                 if (match.range.to > editor.state.doc.length) continue;
                 // Ignore typos that are in the spellcheck dictionary
-                if (match.categoryId === "TYPOS" && spellcheckDictionary.includes(match.text))
+                if (
+                    isSpelling(match.categoryId, match.ruleId) &&
+                    spellcheckDictionary.includes(match.text.trim())
+                )
                     continue;
 
                 // Ignore whitespace lints inside tables
@@ -655,7 +666,10 @@ export default class LanguageToolPlugin extends Plugin {
     }
 
     public async onExternalSettingsChange() {
+        const serverUrl = this.settings.options.serverUrl;
         await this.settings.load();
+        if (this.settings.options.serverUrl !== serverUrl) this.settingTab.reloadLanguages();
+        else this.settingTab.update();
     }
 
     /**

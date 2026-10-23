@@ -109,6 +109,88 @@ export class AnnotatedText {
         }, 0);
     }
 
+    /** Length of the text LanguageTool checks, which is what its size limits apply to */
+    plainLength(): number {
+        return this.annotations.reduce(
+            (acc, a) => acc + ("text" in a ? a.text.length : (a.interpretAs?.length ?? 0)),
+            0,
+        );
+    }
+
+    /** Annotations grouped by the blocks they belong to, which end with a matching line break */
+    private blockAnnotations(lineBreak: string): Annotation[][] {
+        const blocks: Annotation[][] = [[]];
+        for (const a of this.annotations) {
+            blocks.at(-1)!.push(a);
+            if ("markup" in a && a.interpretAs?.includes(lineBreak)) blocks.push([]);
+        }
+        return blocks.filter(block => block.length);
+    }
+
+    /**
+     * Split into paragraphs, list items, headings and table rows.
+     * The raw lengths of the parts add up to this length.
+     */
+    paragraphs(): AnnotatedText[] {
+        return this.blockAnnotations("\n\n").map(block => new AnnotatedText(block));
+    }
+
+    /** Whether there is any text to check, rather than only markup */
+    hasText(): boolean {
+        return this.annotations.some(a => "text" in a && a.text.trim().length > 0);
+    }
+
+    /**
+     * Split into consecutive parts whose plain length is at most `maxLength`,
+     * preferably at block boundaries. The raw lengths of the parts add up to this length.
+     */
+    split(maxLength: number): AnnotatedText[] {
+        if (maxLength <= 0 || this.plainLength() <= maxLength) return [this];
+
+        // Blocks end with markup that is interpreted as a line break
+        const blocks = this.blockAnnotations("\n");
+
+        const parts: AnnotatedText[] = [];
+        let current = new AnnotatedText();
+        for (const block of blocks) {
+            const blockText = new AnnotatedText(block);
+            if (current.plainLength() + blockText.plainLength() <= maxLength) {
+                current.annotations.push(...block);
+                continue;
+            }
+            if (current.annotations.length) parts.push(current);
+            current = new AnnotatedText();
+            // A single block that is too long is split between words
+            for (const a of block) {
+                const plain = "text" in a ? a.text.length : (a.interpretAs?.length ?? 0);
+                if (current.plainLength() + plain <= maxLength) {
+                    current.annotations.push({ ...a });
+                    continue;
+                }
+                if (!("text" in a)) {
+                    if (current.annotations.length) parts.push(current);
+                    current = new AnnotatedText([{ ...a }]);
+                    continue;
+                }
+                let text = a.text;
+                while (current.plainLength() + text.length > maxLength) {
+                    const room = maxLength - current.plainLength();
+                    let cut = text.lastIndexOf(" ", room);
+                    if (cut <= 0) cut = room > 0 ? room : Math.min(maxLength, text.length);
+                    if (room > 0 || !current.annotations.length) {
+                        current.annotations.push({ text: text.slice(0, cut) });
+                        text = text.slice(cut);
+                    }
+                    parts.push(current);
+                    current = new AnnotatedText();
+                }
+                if (text) current.annotations.push({ text });
+            }
+        }
+        if (current.annotations.length) parts.push(current);
+        return parts;
+    }
+
     stringify(): string {
         return JSON.stringify({ annotation: this.annotations });
     }

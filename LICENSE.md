@@ -1,3 +1,34 @@
+Language Tool, spelling and grammar checking for Obsidian with LanguageTool
+Copyright (C) 2026 DuckTapeKiller
+
+Language Tool is a modified version of obsidian-languagetool
+(https://github.com/wrenger/obsidian-languagetool) by Lars Wrenger, which is
+itself a fork of obsidian-languagetool-plugin
+(https://github.com/Clemens-E/obsidian-languagetool-plugin) by Clemens Ertle,
+with contributions from Matthew Meyers and others. The copyright of their work
+remains with them; the full list of contributors is in the git history. Both
+original projects are published under the GNU Affero General Public License
+version 3, so this version is too.
+
+This version was modified by DuckTapeKiller in October 2026: it was renamed,
+and it adds preferred languages for auto detection and fixes a number of bugs,
+as described in README.md.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+-------------------------------------------------------------------------------
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

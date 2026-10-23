@@ -1,24 +1,21 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync } from "node:fs";
+import * as Bun from "bun";
 
-const targetVersion = process.env.npm_package_version;
+const targetVersion = Bun.env.npm_package_version;
 
-if (!targetVersion) {
-    console.error("npm_package_version environment variable not set");
-    process.exit(1);
-}
+if (!targetVersion) throw new Error("npm_package_version environment variable not set");
 
 // read minAppVersion from manifest.json and bump version to target version
-const manifest = JSON.parse(readFileSync("manifest.json", "utf8")) as {
+const manifest = (await Bun.file("manifest.json").json()) as {
     version: string;
     minAppVersion: string;
     [key: string]: unknown;
 };
 const { minAppVersion } = manifest;
 manifest.version = targetVersion;
-writeFileSync("manifest.json", JSON.stringify(manifest, null, "\t"));
+await Bun.write("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
 
 // update versions.json with target version and minAppVersion from manifest.json
-const versions = JSON.parse(readFileSync("versions.json", "utf8")) as Record<string, string>;
+const versions = (await Bun.file("versions.json").json()) as Record<string, string>;
 versions[targetVersion] = minAppVersion;
-writeFileSync("versions.json", JSON.stringify(versions, null, "\t"));
+await Bun.write("versions.json", JSON.stringify(versions, null, 2) + "\n");

@@ -1,18 +1,22 @@
 {
-  "name": "obsidian-languagetool",
-  "version": "1.5.2",
-  "description": "Unofficial integration of the LanguageTool spell and grammar checker.",
+  "name": "language-tool",
+  "version": "1.0.0",
+  "description": "Spelling and grammar checking with LanguageTool, on your own server or LanguageTool's.",
   "main": "main.js",
   "type": "module",
   "scripts": {
-    "build": "bun run scripts/build.ts",
+    "build": "eslint . --max-warnings=0 && bun run scripts/build.ts",
     "test": "bun test",
     "version": "bun run scripts/version-bump.ts && git add manifest.json versions.json",
-    "lint": "bunx eslint ."
+    "lint": "eslint . --max-warnings=0"
   },
   "keywords": [],
-  "author": "Lars Wrenger",
+  "author": "DuckTapeKiller",
   "contributors": [
+    {
+      "name": "DuckTapeKiller",
+      "url": "https://github.com/DuckTapeKiller"
+    },
     {
       "name": "Lars Wrenger",
       "url": "https://github.com/wrenger"
@@ -26,8 +30,9 @@
       "url": "https://github.com/mgmeyers"
     }
   ],
+  "license": "AGPL-3.0-or-later",
   "repository": {
-    "url": "https://github.com/wrenger/obsidian-languagetool-plugin"
+    "url": "https://github.com/DuckTapeKiller/language-tool"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -43,7 +48,6 @@
   "dependencies": {
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
-    "electron": "^43.7.7",
     "jsonpath-plus": "^10.4.0",
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-frontmatter": "^2.0.1",
