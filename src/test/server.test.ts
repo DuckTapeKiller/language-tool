@@ -151,3 +151,27 @@ describe.skipIf(!available)(`RAE rules with ${server}`, () => {
         expect(lints[0].replacements[0]).toBe("30 de octubre de 2020");
     });
 });
+
+describe.skipIf(!available)(`Spanish varieties with ${server}`, () => {
+    const text = "Vos sabés que tenés razón y no tenés que preocuparte.";
+    const variety = (es: string) => ({
+        preferredLanguages: ["en", "es"],
+        languageVariety: { ...DEFAULT_SETTINGS.languageVariety, es },
+    });
+
+    test("generic Spanish marks voseo", async () => {
+        const lints = await check(text, variety("es"));
+        expect(lints.map(l => l.ruleId)).toContain("VOSEO");
+    });
+
+    test("the voseo variety accepts it", async () => {
+        expect(await check(text, variety("es-AR"))).toEqual([]);
+        // And still checks spelling
+        const lints = await check("Vos sabés que tenés razón en el mercao.", variety("es-AR"));
+        expect(lints.map(l => l.replacements[0])).toContain("mercado");
+    });
+
+    test("a note in Spanish follows the variety", async () => {
+        expect(await check(text, { ...variety("es-AR"), staticLanguage: "es" })).toEqual([]);
+    });
+});

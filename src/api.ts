@@ -77,7 +77,9 @@ export function checkParams(
     if (options.disabledRules.length) params.disabledRules = options.disabledRules.join(",");
 
     if (lang == "auto") {
-        params.preferredVariants = Object.values(options.languageVariety).join(",");
+        // A generic variety (e.g. "es") is no variant, and the server rejects it here
+        const variants = Object.values(options.languageVariety).filter(v => v.includes("-"));
+        if (variants.length) params.preferredVariants = variants.join(",");
         // Without hints, short snippets are often detected as unrelated languages
         const preferred = baseLanguageCodes(options.preferredLanguages);
         if (preferred.length) {

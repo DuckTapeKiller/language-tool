@@ -88,6 +88,16 @@ export const LANGUAGE_VARIETIES: LanguageVariety[] = [
         name: "Catalan",
         variants: { "ca-ES": "Catalan", "ca-ES-valencia": "Catalan (Valencian)" },
     },
+    {
+        code: "es",
+        name: "Spanish",
+        // Generic Spanish marks voseo («vos tenés») as an error; the voseo variety accepts it
+        variants: {
+            es: "Spanish (generic)",
+            "es-ES": "Spanish (Spain)",
+            "es-AR": "Spanish (voseo)",
+        },
+    },
 ];
 
 export class Endpoint {
@@ -176,6 +186,11 @@ export class LTSettings {
     public async load(): Promise<void> {
         const options = await this.loadOptions();
         this._options = { ...DEFAULT_SETTINGS, ...options };
+        // Languages added to the varieties later get their default
+        this._options.languageVariety = {
+            ...DEFAULT_SETTINGS.languageVariety,
+            ...options.languageVariety,
+        };
     }
 
     public getApiKey(): string | null {

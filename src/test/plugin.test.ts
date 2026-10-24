@@ -50,6 +50,25 @@ describe("check parameters", () => {
         expect(params.forcePreferredLanguages).toBe("true");
     });
 
+    test("generic Spanish is not sent as a variant, voseo is", () => {
+        const generic = checkParams(options(), null, "{}");
+        expect(generic.preferredVariants.split(",")).not.toContain("es");
+        const voseo = checkParams(
+            options({ languageVariety: { ...DEFAULT_SETTINGS.languageVariety, es: "es-AR" } }),
+            null,
+            "{}",
+        );
+        expect(voseo.preferredVariants.split(",")).toContain("es-AR");
+    });
+
+    test("a note in Spanish uses the chosen variety", () => {
+        const voseo = { ...DEFAULT_SETTINGS.languageVariety, es: "es-AR" };
+        expect(resolveLanguage(options({ staticLanguage: "es" }))).toBe("es");
+        expect(resolveLanguage(options({ staticLanguage: "es", languageVariety: voseo }))).toBe(
+            "es-AR",
+        );
+    });
+
     test("a static language ignores preferred languages", () => {
         const params = checkParams(
             options({ staticLanguage: "es", preferredLanguages: ["en"] }),

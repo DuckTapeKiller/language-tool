@@ -16,6 +16,7 @@ Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/ob
 - **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact. A suggestion that would remove markup is shown but cannot be applied.
 - **Spanish typography (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as the full stop after closing quotation marks, em dashes, thousands, dates and «angular» quotation marks.
 - **British spelling.** "-ise" and "-ize" are both accepted in British English, unless you ask for Oxford spelling.
+- **Spanish varieties.** Spanish can be checked as generic Spanish, Spanish from Spain, or Spanish with voseo («vos tenés»), which generic Spanish marks as an error.
 - **Obsidian syntax is not checked:** comments, tags, callout markers, block IDs, embeds and highlight markers. Inline code and maths read as a neutral word, so they no longer cause spacing warnings.
 - A note language given without a variety (`lt-language: en`) is checked in the variety chosen in the settings. Before, it silently turned off spell checking.
 - Long notes are checked in parts, so they no longer fail on the public server's limit of 20,000 characters per request.
@@ -87,6 +88,16 @@ LanguageTool checks Spanish spelling and grammar well, but misses much of the or
 | «Angular» quotation marks first | “cita” · "cita" | «cita» |
 
 The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". For headings, only the articles and prepositions are lowered, as the plugin cannot tell which other words are proper names.
+
+### Language varieties
+
+Under Settings → Language Tool → Language varieties, choose how English, German, Portuguese, Catalan and Spanish are checked when detected, and when a note's `lt-language` gives only the language (`lt-language: es`). For Spanish:
+
+- **Spanish (generic)**, the default, marks voseo as an error: «vos tenés» → «tú tienes».
+- **Spanish (Spain)** does the same, with peninsular conventions.
+- **Spanish (voseo)** accepts «vos sabés», «tenés», «querés», as in Río de la Plata and Central American Spanish.
+
+LanguageTool has no other regional Spanish, so vocabulary of a particular country is not checked differently.
 
 ### British spelling
 
