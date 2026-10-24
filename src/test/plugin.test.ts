@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { AnnotatedText } from "../annotated";
 import { baseLanguageCodes, checkParams, planRequests, resolveLanguage } from "../api";
-import { cmpIgnoreCase, isSpelling, nonOverlapping } from "../helpers";
-import { SyntaxTree } from "../markdown/parser";
+import { cmpIgnoreCase, isSpelling, nonOverlapping, suggestionChange } from "../helpers";
+import { obsidianSyntax, SyntaxTree } from "../markdown/parser";
 import { applyNoteSettings } from "../noteSettings";
 import { DEFAULT_SETTINGS, LTOptions } from "../settings";
 
@@ -44,7 +44,7 @@ describe("check parameters", () => {
     });
 
     test("strict mode is only sent with preferred languages", () => {
-        const force = { forcePreferredLanguages: true };
+        const force = { otherLanguages: "force" as const };
         expect(checkParams(options(force), null, "{}").forcePreferredLanguages).toBeUndefined();
         const params = checkParams(options({ ...force, preferredLanguages: ["es"] }), null, "{}");
         expect(params.forcePreferredLanguages).toBe("true");
@@ -267,5 +267,130 @@ describe("splitting long text", () => {
             { text: " after." },
         ]);
         expect(text.split(30)).toEqual([text]);
+    });
+});
+
+describe("suggestions keep the formatting", () => {
+    // Apply a suggestion the way the editor does, on the whole note
+    function apply(source: string, word: string, replacement: string): string | null {
+        const { offset, annotations } = new SyntaxTree(source).annotate(undefined);
+        const start = offset + annotations.optimize();
+        const from = source.indexOf(word);
+        const to = from + word.length;
+        const edit = annotations.safeEdits(from - start, to - start, replacement);
+        const change = suggestionChange(
+            {
+                text: word,
+                title: "",
+                message: "",
+                replacements: [replacement],
+                edits: [edit],
+                categoryId: "",
+                ruleId: "",
+            },
+            { from, to },
+            0,
+        );
+        if (!change) return null;
+        // Apply from the end, so earlier positions stay valid
+        let result = source;
+        for (const c of [...change].sort((a, b) => b.from - a.from))
+            result = result.slice(0, c.from) + c.insert + result.slice(c.to);
+        return result;
+    }
+
+    test("plain words are replaced as before", () => {
+        expect(apply("Teh hous is big.", "hous", "house")).toBe("Teh house is big.");
+        expect(apply("Teh hous is big.", "Teh hous", "The house")).toBe("The house is big.");
+    });
+
+    test("a space after an emphasis marker is removed without the marker", () => {
+        expect(apply("Una _frase_ .", "_ .", ".")).toBe("Una _frase_.");
+    });
+
+    test("bold text keeps its markers", () => {
+        expect(apply("Es **muy** importnte.", "importnte", "importante")).toBe(
+            "Es **muy** importante.",
+        );
+        expect(apply("Es **mui** bueno.", "**mui**", "muy")).toBe("Es **muy** bueno.");
+    });
+
+    test("a change next to a link keeps the link", () => {
+        const source = "[Einstein](http://example.org/einstein)‘s theory";
+        expect(apply(source, "Einstein](http://example.org/einstein)‘s", "Einstein’s")).toBe(
+            "[Einstein](http://example.org/einstein)’s theory",
+        );
+    });
+
+    test("a change that would remove markup is not offered", () => {
+        expect(apply("SEGUN- <br> DO", "SEGUN- <br> DO", "SEGUNDO")).toBeNull();
+        expect(apply("Valor $x$ final", "Valor $x$", "Valores")).toBeNull();
+    });
+
+    test("an escaped character is never split", () => {
+        // The space goes before the escape, which stays whole
+        expect(apply("El 90\\% de los casos.", "90\\%", "90 %")).toBe("El 90 \\% de los casos.");
+    });
+
+    test("an Obsidian comment is never removed", () => {
+        const source = "Una frase %%nota%% con texto.";
+        expect(apply(source, "frase %%nota%% con", "frase con")).toBe(source);
+    });
+});
+
+describe("Obsidian syntax", () => {
+    function checked(source: string): string {
+        const { annotations } = new SyntaxTree(source).annotate(undefined);
+        annotations.optimize();
+        return annotations.annotations
+            .map(a => ("text" in a ? a.text : (a.interpretAs ?? "")))
+            .join("")
+            .trim();
+    }
+
+    test("comments are not checked", () => {
+        expect(checked("Antes %%bd2ec9c0%% después.")).toBe("Antes después.");
+        expect(checked("Uno.\n\n%%\nvarias\nlíneas\n%%\n\nDos.")).toBe("Uno.\n\nDos.");
+    });
+
+    test("tags, block IDs and embeds are not checked", () => {
+        expect(checked("Texto #medios/bbc más texto.")).toBe("Texto más texto.");
+        expect(checked("#etiqueta Texto.")).toBe("Texto.");
+        expect(checked("Una frase con ID. ^abc-123")).toBe("Una frase con ID.");
+        expect(checked("Una imagen ![[foto.png]] aquí.").includes("!")).toBeFalse();
+    });
+
+    test("headings, numbers and anchors are not tags", () => {
+        expect(obsidianSyntax("# Título")).toEqual([]);
+        expect(obsidianSyntax("El número #1 de la lista")).toEqual([]);
+        expect(obsidianSyntax("Ver https://example.org/#ancla")).toEqual([]);
+    });
+
+    test("callout markers are not checked, their titles are", () => {
+        expect(checked("> [!note] Un título\n> El texto.")).toBe("Un título\nEl texto.");
+    });
+
+    test("invisible markup between spaces leaves a single space", () => {
+        expect(checked("La bandera ![Bandera](https://example.org/b.png) de Colombia.")).toBe(
+            "La bandera de Colombia.",
+        );
+        expect(checked("Una <span>frase</span> y otra.")).toBe("Una frase y otra.");
+    });
+
+    test("inline code and math read as a neutral word", () => {
+        expect(checked("Ejecuta `npm instal` ahora.")).toBe("Ejecuta 0 ahora.");
+        expect(checked("Vale $x^2$ más.")).toBe("Vale 0 más.");
+        // Glued to a word, it reads as nothing
+        expect(checked("La revista`|formato=` dice.")).toBe("La revista dice.");
+    });
+
+    test("highlights keep their text", () => {
+        expect(checked("Es ==muy importante== saberlo.")).toBe("Es muy importante saberlo.");
+    });
+
+    test("positions do not move", () => {
+        const source = "Antes %%x%% y #tag después ==resaltado== fin. ^id";
+        const { annotations } = new SyntaxTree(source).annotate(undefined);
+        expect(annotations.length()).toBe(source.length);
     });
 });

@@ -13,7 +13,7 @@ import {
     TFile,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
-import { StateEffect } from "@codemirror/state";
+import { ChangeSpec, StateEffect } from "@codemirror/state";
 import { endpointFromUrl, LTOptions, LTSettings, LTSettingsTab, SUGGESTIONS } from "./settings";
 import * as api from "./api";
 import { underlineExtension } from "./editor/extension";
@@ -26,11 +26,13 @@ import {
 } from "./editor/underlines";
 import {
     cmpIgnoreCase,
+    errorMessage,
     isSpelling,
     nonOverlapping,
     setDifference,
     setIntersect,
     setUnion,
+    suggestionChange,
 } from "./helpers";
 import * as markdown from "./markdown/parser";
 import { applyNoteSettings } from "./noteSettings";
@@ -88,7 +90,35 @@ export default class LanguageToolPlugin extends Plugin {
         this.app.workspace.onLayoutReady(() => {
             this.settingTab.load().catch(e => console.error(e));
             this.syncDictionary().catch(e => console.error(e));
+            this.checkOpenedNote(this.app.workspace.getActiveFile());
         });
+        this.registerEvent(this.app.workspace.on("file-open", file => this.checkOpenedNote(file)));
+    }
+
+    /** With automatic checking, check a note when it is opened */
+    private checkOpenedNote(file: TFile | null) {
+        if (!file) return;
+        const settings = this.getFileSettings(file);
+        if (!settings.shouldAutoCheck || !settings.checkOnOpen) return;
+        // The editor shows the file only after the event
+        window.setTimeout(() => {
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view || view.file !== file || view.getMode() !== "source") return;
+            // @ts-expect-error, not typed
+            const editor = view.editor.cm as EditorView;
+            // Already checked, e.g. when returning to a tab
+            if (editor.state.field(underlineDecoration).size) return;
+            this.runDetection(editor, true).catch(e => this.autoCheckFailed(e));
+        }, 100);
+    }
+
+    /** Report a failed automatic check, at most every 15 minutes */
+    public autoCheckFailed(e: unknown) {
+        console.error("Auto-check failed", e);
+        if (Date.now() > this.autoCheckSuppressErrorsUntil) {
+            this.autoCheckSuppressErrorsUntil = Date.now() + 15 * 60_000;
+            new Notice("Auto-check failed:\n" + errorMessage(e), 10000);
+        }
     }
 
     public onunload() {
@@ -168,21 +198,23 @@ export default class LanguageToolPlugin extends Plugin {
             editorCallback: editor => {
                 // @ts-expect-error, not typed
                 const editorView = editor.cm as EditorView;
-                let changes: { from: number; to: number; insert: string }[] = [];
+                let accepted: { from: number; to: number; change: ChangeSpec[] }[] = [];
                 editorView.state
                     .field(underlineDecoration)
                     .between(0, Infinity, (from, to, value) => {
                         let underline = (value.spec as { underline?: api.LTLint }).underline;
-                        if (underline?.replacements?.length) {
-                            changes.push({ from, to, insert: underline.replacements[0] });
-                        }
+                        // Suggestions that would break the formatting are left for the user
+                        const change = underline && suggestionChange(underline, { from, to }, 0);
+                        if (change) accepted.push({ from, to, change });
                     });
                 // Overlapping suggestions cannot all be applied; the others stay underlined
-                changes = nonOverlapping(changes);
-                const effects = changes.map(({ from, to }) =>
-                    clearUnderlinesInRange.of({ from, to }),
-                );
-                editorView.dispatch({ changes, effects });
+                accepted = nonOverlapping(accepted);
+                editorView.dispatch({
+                    changes: accepted.flatMap(a => a.change),
+                    effects: accepted.map(({ from, to }) =>
+                        clearUnderlinesInRange.of({ from, to }),
+                    ),
+                });
             },
         });
         this.addCommand({
@@ -249,11 +281,9 @@ export default class LanguageToolPlugin extends Plugin {
                 const editorView = editor.cm as EditorView;
 
                 let match = singleMatchAtCursor(editor, n);
-                if (!match) return checking ? false : undefined;
+                const change = match && suggestionChange(match, match.range, n - 1);
+                if (!match || !change) return checking ? false : undefined;
                 if (checking) return true;
-
-                // At this point, the check must have been successful.
-                const change = { ...match.range, insert: match.replacements[n - 1] };
 
                 // Insert the text of the match
                 editorView.dispatch({
@@ -336,17 +366,20 @@ export default class LanguageToolPlugin extends Plugin {
             submenu.addSeparator();
         }
 
-        for (const replacement of match.replacements.slice(0, SUGGESTIONS)) {
+        match.replacements.slice(0, SUGGESTIONS).forEach((replacement, index) => {
+            const change = suggestionChange(match, range, index);
             submenu.addItem(item => {
                 item.setTitle(replacement ? JSON.stringify(replacement) : "(delete)");
+                // Applying it would remove markup, e.g. an emphasis marker or a link
+                if (!change) return item.setDisabled(true);
                 item.onClick(() => {
                     editor.dispatch({
-                        changes: { ...range, insert: replacement },
+                        changes: change,
                         effects: [clearUnderlinesInRange.of(range)],
                     });
                 });
             });
-        }
+        });
 
         submenu.addSeparator();
 
@@ -580,7 +613,7 @@ export default class LanguageToolPlugin extends Plugin {
                 const results = await Promise.all(
                     requests
                         .slice(i, i + parallel)
-                        .map(r => api.check(settings, apiKey, r.offset, r.text)),
+                        .map(r => api.check(settings, apiKey, r.offset, r.text, text)),
                 );
                 matches.push(...results.flat());
                 // The results are discarded below if the document has changed

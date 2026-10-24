@@ -1,8 +1,9 @@
 import { endpointFromUrl, getEndpoint, LTOptions } from "./settings";
 import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
-import { AnnotatedText } from "./annotated";
+import { AnnotatedText, TextEdit } from "./annotated";
 import { errorMessage } from "./helpers";
+import { spanishRules } from "./rules/spanish";
 
 /** LanguageTool Check API: https://languagetool.org/http-api/swagger-ui */
 
@@ -12,6 +13,11 @@ export interface LTMatch {
     title: string;
     message: string;
     replacements: string[];
+    /**
+     * For each replacement, the changes to make relative to the start of the match,
+     * or null if they would break the formatting. Without edits the whole match is replaced.
+     */
+    edits?: (TextEdit[] | null)[];
     categoryId: string;
     ruleId: string;
 }
@@ -61,8 +67,11 @@ export function checkParams(
 
     if (options.enabledCategories.length)
         params.enabledCategories = options.enabledCategories.join(",");
-    if (options.disabledCategories.length)
-        params.disabledCategories = options.disabledCategories.join(",");
+    // "-ise" and "-ize" are both British; Oxford spelling is a house style
+    const disabledCategories = options.oxfordSpelling
+        ? options.disabledCategories
+        : [...options.disabledCategories, "BRE_STYLE_OXFORD_SPELLING"];
+    if (disabledCategories.length) params.disabledCategories = disabledCategories.join(",");
 
     if (options.enabledRules.length) params.enabledRules = options.enabledRules.join(",");
     if (options.disabledRules.length) params.disabledRules = options.disabledRules.join(",");
@@ -73,7 +82,7 @@ export function checkParams(
         const preferred = baseLanguageCodes(options.preferredLanguages);
         if (preferred.length) {
             params.preferredLanguages = preferred.join(",");
-            if (options.forcePreferredLanguages) params.forcePreferredLanguages = "true";
+            if (options.otherLanguages === "force") params.forcePreferredLanguages = "true";
         }
     }
 
@@ -126,6 +135,7 @@ export async function check(
     apiKey: string | null,
     offset: number,
     annotated: AnnotatedText,
+    source?: string,
 ): Promise<LTLint[]> {
     const params = checkParams(options, apiKey, annotated.stringify());
 
@@ -141,20 +151,97 @@ export async function check(
 
     if (res.json == null) throw new Error(`Error processing response from LanguageTool.`);
 
+    // Text detected as a language that is not preferred, e.g. a quotation, can be left unchecked
+    if (
+        params.language === "auto" &&
+        params.preferredLanguages &&
+        options.otherLanguages === "ignore"
+    ) {
+        const detected = baseLanguageCodes([
+            jsonPath<string>("$.language.code@string()", res.json as JsonValue),
+        ]);
+        if (!params.preferredLanguages.split(",").includes(detected[0])) return [];
+    }
+
     const matches = jsonPathA<JsonValue>("$.matches[*]", res.json as JsonValue);
-    return matches.map(match => {
+    const lints: LTLint[] = matches.map(match => {
         const from = jsonPath<number>("$.offset@number()", match);
         const to = from + jsonPath<number>("$.length@number()", match);
+        const replacements = jsonPathA<string>("$.replacements[*].value@string()", match);
         return {
             range: { from: offset + from, to: offset + to },
             text: annotated.extractSlice(from, to) || "",
             title: jsonPath<string>("$.shortMessage@string()", match),
             message: jsonPath<string>("$.message@string()", match),
-            replacements: jsonPathA<string>("$.replacements[*].value@string()", match),
+            replacements,
+            edits: replacements.map(r => annotated.safeEdits(from, to, r)),
             categoryId: jsonPath<string>("$.rule.category.id@string()", match),
             ruleId: jsonPath<string>("$.rule.id@string()", match),
         };
     });
+
+    const detected = jsonPath<string>("$.language.code@string()", res.json as JsonValue);
+    if (options.spanishRules && detected.toLowerCase().startsWith("es"))
+        return withSpanishLints(options, offset, annotated, lints, source);
+    return lints;
+}
+
+/// Categories of LanguageTool matches that a more complete RAE match may replace
+const REPLACEABLE = new Set(["CASING", "TYPOGRAPHY", "PUNCTUATION"]);
+
+/**
+ * Add the matches of the RAE rules that LanguageTool lacks, for text detected as Spanish.
+ * `source` is the note, which tells where the headings are.
+ */
+function withSpanishLints(
+    options: Readonly<LTOptions>,
+    offset: number,
+    annotated: AnnotatedText,
+    found: LTLint[],
+    source?: string,
+): LTLint[] {
+    const { text, raw } = annotated.plainText();
+    // Positions of the checked text for raw positions, to find the headings in it
+    const plainAt = new Map<number, number>();
+    raw.forEach((r, i) => r != null && plainAt.set(r, i));
+    const headings: { from: number; to: number }[] = [];
+    if (source) {
+        for (const m of source.matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*$/gm)) {
+            const start = m.index + m[0].indexOf(m[1]) - offset;
+            const from = plainAt.get(start);
+            const to = plainAt.get(start + m[1].length - 1);
+            if (from != null && to != null) headings.push({ from, to: to + 1 });
+        }
+    }
+
+    const result: LTLint[] = [];
+    const replaced = new Set<LTLint>();
+    for (const m of spanishRules(text, { headings })) {
+        if (options.disabledRules.includes(m.ruleId)) continue;
+        if (options.disabledCategories.includes(m.categoryId)) continue;
+        // The match must start and end on text of the note, not on markup
+        const from = raw[m.from];
+        const last = raw[m.to - 1];
+        if (from == null || last == null) continue;
+        const range = { from: offset + from, to: offset + last + 1 };
+        // Where LanguageTool reports part of the same text, LanguageTool's match is kept,
+        // unless it is a casing, typography or punctuation match the rule covers completely.
+        // Spelling and grammar inside, e.g. inside a quotation, are always kept.
+        const overlapping = found.filter(l => l.range.from < range.to && l.range.to > range.from);
+        if (overlapping.some(l => l.range.from < range.from || l.range.to > range.to)) continue;
+        for (const l of overlapping) if (REPLACEABLE.has(l.categoryId)) replaced.add(l);
+        result.push({
+            range,
+            text: text.slice(m.from, m.to),
+            title: m.title,
+            message: m.message,
+            replacements: m.replacements,
+            edits: m.replacements.map(r => annotated.safeEdits(from, last + 1, r)),
+            categoryId: m.categoryId,
+            ruleId: m.ruleId,
+        });
+    }
+    return [...found.filter(l => !replaced.has(l)), ...result];
 }
 
 export interface Language {

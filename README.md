@@ -10,8 +10,16 @@ Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/ob
 
 - **Preferred languages.** Auto detection can be told which languages you write in, so a short paragraph with a typo is no longer checked as German, Slovenian or Esperanto.
 - **A language for each paragraph.** With your own server, every paragraph can be checked in its own language, so a note can mix English and Spanish, for example.
+- **Text in other languages** can be left unchecked, so a quotation in French gets no French suggestions.
+- **Click an underline to see its suggestions.** Hovering opens them too, without the misses after scrolling that CodeMirror's hover tooltips had. Escape closes them.
+- **Automatic checking checks a note when you open it**, not only the paragraphs you edit.
+- **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact. A suggestion that would remove markup is shown but cannot be applied.
+- **Spanish typography (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as the full stop after closing quotation marks, em dashes, thousands, dates and «angular» quotation marks.
+- **British spelling.** "-ise" and "-ize" are both accepted in British English, unless you ask for Oxford spelling.
+- **Obsidian syntax is not checked:** comments, tags, callout markers, block IDs, embeds and highlight markers. Inline code and maths read as a neutral word, so they no longer cause spacing warnings.
 - A note language given without a variety (`lt-language: en`) is checked in the variety chosen in the settings. Before, it silently turned off spell checking.
 - Long notes are checked in parts, so they no longer fail on the public server's limit of 20,000 characters per request.
+- A malformed link containing an email address no longer stops the whole note from being checked.
 - Auto-check keeps a separate state for every open note. Before, editing two notes in quick succession could leave the first unchecked and check the second at the wrong positions.
 - Text edited while a check is running is checked again once the check has finished.
 - Choosing a suggestion from the right-click menu replaces the right word.
@@ -32,12 +40,14 @@ Language Tool is not in the community plugin list. To install it, build it from 
 
 ## Usage
 
-Hotkeys for the commands can be set under Settings → Hotkeys; search for "Language Tool". Make sure they do not clash with existing hotkeys. You may want to turn off Obsidian's own spellcheck (Settings → Editor → Spellcheck).
+Hotkeys for the commands can be set under Settings → Hotkeys; search for "Language Tool". Make sure they do not clash with existing hotkeys. You may want to turn off Obsidian's own spellcheck (Settings → Editor → Spellcheck): its underlines look similar but come from your system's dictionary, and show no suggestions when you click or hover.
 
-- **Check text** checks the whole note, or only the selected text. Underlined words show suggestions when you hover over them, with the option to add the word to your dictionary or to disable the rule.
+- **Check text** checks the whole note, or only the selected text. Click an underlined word, or rest the mouse on it, to see its suggestions, with the option to add the word to your dictionary or to disable the rule.
 - **Clear suggestions** removes all underlines.
-- **Toggle automatic checking** turns checking as you type on or off.
+- **Toggle automatic checking** turns checking as you type on or off. With it on, a note is also checked when you open it, unless you turn off "Check notes when opened".
 - **Accept all suggestions** applies the first suggestion of every underline.
+
+In Live Preview, callouts and tables are drawn as rendered blocks, which show no underlines. Click into one to edit it, and its underlines appear.
 
 LanguageTool detects the language of the text it checks unless you choose a static language under Settings → Language Tool → Static language. It detects one language for each request: "Check text" sends the whole note, and automatic checking sends the paragraphs you have just edited.
 
@@ -45,13 +55,42 @@ LanguageTool detects the language of the text it checks unless you choose a stat
 
 Detection only sees the text being checked, so a short paragraph with a typo is sometimes detected as an unrelated language ("Teh hous" as Slovenian, for example). Under Settings → Language Tool → Preferred languages, add the languages you write in, and detection will favour them. Text that is clearly in another language is still detected as such.
 
-"Only use these languages" checks everything as one of the preferred languages. It stops detection mistakes completely, but quotations in other languages are then marked as errors.
+"Text in other languages" decides what happens to a paragraph detected as a language that is not preferred, such as a quotation:
+
+- **Check it in its own language** (the default) gives suggestions in that language.
+- **Leave it unchecked** skips it, so you only ever get suggestions in your own languages. A paragraph of yours that is misdetected is skipped too.
+- **Check it as one of these languages** checks everything as one of the preferred languages. It also corrects misdetected paragraphs, but marks quotations in other languages as errors.
 
 ### A language for each paragraph
 
 As a note is checked in one language, a note that mixes languages has the paragraphs in the other language marked as errors. "Detect the language of each paragraph" checks every paragraph, heading and list item in a separate request, so each gets its own language. A phrase in another language inside a paragraph is still checked in the paragraph's language. Short paragraphs are easily misdetected, so use it together with preferred languages.
 
 It sends one request per paragraph, which the public and Premium servers would refuse, so it is only available with your own server.
+
+### Spanish typography (RAE)
+
+LanguageTool checks Spanish spelling and grammar well, but misses much of the orthotypography of the RAE's *Libro de estilo de la lengua española*. Under Settings → Language Tool → Spanish typography (RAE), the plugin adds these checks to every paragraph LanguageTool detects as Spanish:
+
+| Rule | Wrong | Right |
+|---|---|---|
+| Full stop after closing signs | «No te vayas.» | «No te vayas». |
+| No full stop after ? or ! | ¿Vienes?. | ¿Vienes? |
+| Colon after a letter greeting | Estimados vecinos, | Estimados vecinos: |
+| Em dashes joined to the aside | la subasta — la mayor del año — cerró | la subasta —la mayor del año— cerró |
+| Hyphen in ranges | 1998–2012 | 1998-2012 |
+| Thousands with a space | 1.250.000 · 1,250,000 | 1 250 000 |
+| Space before % | 40% | 40 % |
+| Dates in Spanish order | Octubre 30, 2020 | 30 de octubre de 2020 |
+| Months and days in lower case | el Lunes 3 de Enero | el lunes 3 de enero |
+| Positions in lower case | el Rey Felipe, el Papa Francisco | el rey Felipe, el papa Francisco |
+| Headings in sentence case | Historia Y Desarrollo De La Ciudad | Historia y desarrollo de la ciudad |
+| «Angular» quotation marks first | “cita” · "cita" | «cita» |
+
+The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". For headings, only the articles and prepositions are lowered, as the plugin cannot tell which other words are proper names.
+
+### British spelling
+
+LanguageTool's British English marks "realise" and "organise" and suggests "realize" and "organize". Both spellings are correct British English; the "-ize" one is the house style of Oxford University Press. The plugin leaves both alone unless you turn on "Oxford spelling in British English".
 
 ### Ignored words
 

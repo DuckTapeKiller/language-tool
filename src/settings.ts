@@ -213,6 +213,15 @@ export class LTSettings {
         data = parseList(data, "disabledRules");
         data = parseList(data, "preferredLanguages");
 
+        // Migration: the "Only use these languages" toggle became a choice
+        if ("forcePreferredLanguages" in data) {
+            if (!("otherLanguages" in data))
+                data.otherLanguages = data.forcePreferredLanguages === true ? "force" : "check";
+            delete data.forcePreferredLanguages;
+        }
+        if (typeof data.otherLanguages !== "string" || !(data.otherLanguages in OTHER_LANGUAGES))
+            data.otherLanguages = DEFAULT_SETTINGS.otherLanguages;
+
         // Migration: api key into secret storage
         if ("apikey" in data && typeof data.apikey === "string") {
             this.tab.app.secretStorage.setSecret(DEFAULT_SECRET_APIKEY, data.apikey);
@@ -235,6 +244,18 @@ export class LTSettings {
     }
 }
 
+/**
+ * Text detected as a language that is not one of the preferred languages is
+ * checked in that language, left unchecked, or checked as a preferred language.
+ */
+export type OtherLanguages = "check" | "ignore" | "force";
+
+export const OTHER_LANGUAGES: Record<OtherLanguages, string> = {
+    check: "Check it in its own language",
+    ignore: "Leave it unchecked",
+    force: "Check it as one of these languages",
+};
+
 export interface LTOptions {
     endpoint: EndpointType;
     serverUrl: string;
@@ -242,6 +263,8 @@ export interface LTOptions {
     username?: string;
 
     shouldAutoCheck: boolean;
+    /// With automatic checking, also check a whole note when it is opened
+    checkOnOpen: boolean;
     autoCheckDelay: number;
     synonyms: string;
 
@@ -249,10 +272,14 @@ export interface LTOptions {
     staticLanguage: string;
     /// Language codes (e.g. "en", "es") that auto detection should favour
     preferredLanguages: string[];
-    /// Check all text in one of the preferred languages, even if it is clearly in another language
-    forcePreferredLanguages: boolean;
+    /// What to do with text detected as a language that is not preferred
+    otherLanguages: OtherLanguages;
     /// Check every paragraph in a separate request, so that each gets its own language
     paragraphLanguages: boolean;
+    /// Check Spanish text against the RAE rules that LanguageTool lacks
+    spanishRules: boolean;
+    /// In British English, suggest "-ize" instead of "-ise"
+    oxfordSpelling: boolean;
     languageVariety: Record<string, string>;
 
     dictionary: string[];
@@ -276,12 +303,15 @@ export const DEFAULT_SETTINGS: LTOptions = {
     apikeySecret: "",
     autoCheckDelay: endpoints.public.minDelay,
     shouldAutoCheck: false,
+    checkOnOpen: true,
     synonyms: "",
     motherTongue: "",
     staticLanguage: "",
     preferredLanguages: [],
-    forcePreferredLanguages: false,
+    otherLanguages: "check",
     paragraphLanguages: false,
+    spanishRules: true,
+    oxfordSpelling: false,
     languageVariety: Object.fromEntries(
         LANGUAGE_VARIETIES.map(v => [v.code, Object.keys(v.variants)[0]]),
     ),
@@ -558,7 +588,20 @@ export class LTSettingsTab extends PluginSettingTab {
                 },
                 visible: () => settings.options.endpoint !== "public",
             },
-            { name: "Auto check text", control: { type: "toggle", key: "shouldAutoCheck" } },
+            {
+                name: "Auto check text",
+                desc: "Check the paragraphs you edit as you type.",
+                control: { type: "toggle", key: "shouldAutoCheck" },
+            },
+            {
+                name: "Check notes when opened",
+                desc: "With automatic checking on, check the whole note when you open it.",
+                control: {
+                    type: "toggle",
+                    key: "checkOnOpen",
+                    disabled: () => !settings.options.shouldAutoCheck,
+                },
+            },
             {
                 name: "Auto check delay",
                 control: {
@@ -686,13 +729,20 @@ export class LTSettingsTab extends PluginSettingTab {
                                 },
                             },
                             {
-                                name: "Only use these languages",
-                                desc:
-                                    "Check all text as one of the preferred languages, even text that is clearly in another language. " +
-                                    "Quotations in other languages will then be marked as errors.",
+                                name: "Text in other languages",
+                                desc: createFragment(frag => {
+                                    frag.appendText(
+                                        "What to do with a paragraph detected as another language, such as a quotation.",
+                                    );
+                                    frag.createEl("br");
+                                    frag.appendText(
+                                        'Leaving it unchecked avoids suggestions in other languages. "Check it as one of these languages" also corrects text that is misdetected, but marks quotations in other languages as errors.',
+                                    );
+                                }),
                                 control: {
-                                    type: "toggle",
-                                    key: "forcePreferredLanguages",
+                                    type: "dropdown",
+                                    key: "otherLanguages",
+                                    options: OTHER_LANGUAGES,
                                     disabled: () => !settings.options.preferredLanguages.length,
                                 },
                             },
@@ -709,6 +759,22 @@ export class LTSettingsTab extends PluginSettingTab {
                             disabled: () => settings.options.endpoint !== "custom",
                         },
                         visible: () => !settings.options.staticLanguage,
+                    },
+                    {
+                        name: "Spanish typography (RAE)",
+                        desc: createFragment(frag => {
+                            frag.appendText(
+                                "Check Spanish text against rules of the RAE's Libro de estilo that LanguageTool lacks: full stops after closing quotation marks and brackets, em dashes, ranges, thousands, percentages, dates, capitalised months, positions and titles, and «angular» quotation marks.",
+                            );
+                            frag.createEl("br");
+                            frag.appendText('Each rule can be turned off with "Disable rule".');
+                        }),
+                        control: { type: "toggle", key: "spanishRules" },
+                    },
+                    {
+                        name: "Oxford spelling in British English",
+                        desc: 'Suggest "-ize" instead of "-ise" (realize, organize). Both are correct in British English, so without this neither is marked.',
+                        control: { type: "toggle", key: "oxfordSpelling" },
                     },
                     {
                         type: "page",

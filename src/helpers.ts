@@ -1,3 +1,5 @@
+import type { LTMatch, LTRange } from "./api";
+
 export type CategoryClass = "lt-minor" | "lt-style" | "lt-major";
 
 /** Whether a match is a spelling error, which the dictionary can ignore */
@@ -68,4 +70,22 @@ export function cmpIgnoreCase(a: string, b: string): number {
 
 export function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The changes that apply a suggestion to an underline, or null if they would break the
+ * formatting (e.g. remove an emphasis marker). Edits are relative to the start of the
+ * underline, which may have moved since the check.
+ */
+export function suggestionChange(
+    match: LTMatch,
+    range: LTRange,
+    index: number,
+): { from: number; to: number; insert: string }[] | null {
+    const insert = match.replacements[index];
+    if (insert === undefined) return null;
+    const edits = match.edits?.[index];
+    if (edits === undefined) return [{ from: range.from, to: range.to, insert }];
+    if (edits === null) return null;
+    return edits.map(e => ({ from: range.from + e.from, to: range.from + e.to, insert: e.insert }));
 }

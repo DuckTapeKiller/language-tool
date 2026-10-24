@@ -1,7 +1,6 @@
 import { Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import LanguageToolPlugin from "../main";
-import { Notice } from "obsidian";
 import * as api from "../api";
 
 const EMPTY: api.LTRange = { from: Infinity, to: -Infinity };
@@ -81,15 +80,7 @@ export function autoCheckListener(plugin: LanguageToolPlugin): Extension {
                                 this.schedule();
                             }
                         },
-                        e => {
-                            const error = e as Error;
-                            if (Date.now() > plugin.autoCheckSuppressErrorsUntil) {
-                                // Prevent spamming errors
-                                plugin.autoCheckSuppressErrorsUntil = Date.now() + 15 * 60_000; // 15 minutes
-                                new Notice("Auto-check failed:\n" + error.message, 10000);
-                            }
-                            console.error("Auto-check failed", e);
-                        },
+                        e => plugin.autoCheckFailed(e),
                     )
                     .finally(() => {
                         this.checking = null;

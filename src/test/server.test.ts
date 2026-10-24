@@ -45,9 +45,27 @@ describe.skipIf(!available)(`LanguageTool server at ${server}`, () => {
         expect(await check(text, { preferredLanguages: ["en", "es"] })).toEqual([]);
         const forced = await check(text, {
             preferredLanguages: ["en", "es"],
-            forcePreferredLanguages: true,
+            otherLanguages: "force",
         });
         expect(forced.length).toBeGreaterThan(0);
+    });
+
+    test("text in other languages can be left unchecked", async () => {
+        const french = "Selon Michel Louis, 22 % des victimes ont été agressées en plein villlage.";
+        const italian = "Questo è un testo italiano con un erore di ortografia evidente.";
+        expect((await check(french, { preferredLanguages: ["en", "es"] })).length).toBeGreaterThan(
+            0,
+        );
+        for (const text of [french, italian])
+            expect(
+                await check(text, { preferredLanguages: ["en", "es"], otherLanguages: "ignore" }),
+            ).toEqual([]);
+        // Text in the preferred languages is still checked
+        const spanish = await check("Ayer fui al mercao.", {
+            preferredLanguages: ["en", "es"],
+            otherLanguages: "ignore",
+        });
+        expect(spanish.map(l => l.replacements[0])).toContain("mercado");
     });
 
     test("a base language as note language still checks spelling", async () => {
@@ -112,5 +130,24 @@ describe.skipIf(!available)(`LanguageTool server at ${server}`, () => {
         const lints = await check(text, { preferredLanguages: ["en", "es"] });
         const words = lints.map(l => text.slice(l.range.from, l.range.to));
         expect(words).toContain("mercao");
+    });
+});
+
+describe.skipIf(!available)(`RAE rules with ${server}`, () => {
+    test("spelling inside a quotation is kept with the quotation-mark rule", async () => {
+        const text =
+            'El autor del libro "Cartiagena de Indias: coompilación histórica" (2012) añade que el papel del fundador fue aplacar a los pobladores.';
+        const lints = await check(text, { preferredLanguages: ["en", "es"], spanishRules: true });
+        const rules = lints.map(l => `${l.ruleId}:${text.slice(l.range.from, l.range.to)}`);
+        expect(rules).toContain("MORFOLOGIK_RULE_ES:Cartiagena");
+        expect(rules).toContain("MORFOLOGIK_RULE_ES:coompilación");
+        expect(rules.some(r => r.startsWith("RAE_COMILLAS_ANGULARES:"))).toBeTrue();
+    });
+
+    test("the English date replaces LanguageTool's casing of the month", async () => {
+        const text = "Lo recibió el rey en Octubre 30, 2020.";
+        const lints = await check(text, { preferredLanguages: ["en", "es"], spanishRules: true });
+        expect(lints.map(l => l.ruleId)).toEqual(["RAE_FECHA"]);
+        expect(lints[0].replacements[0]).toBe("30 de octubre de 2020");
     });
 });
