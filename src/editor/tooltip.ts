@@ -16,19 +16,18 @@ const HOVER_TIME = 300;
 const FIX_ALL = /^RAE_(?!COMILLAS_Y_CURSIVA$)/;
 
 /** The first suggestion of every underline of a rule in the note, without overlaps */
-function sameRuleChanges(
-    view: EditorView,
-    ruleId: string,
-): { from: number; to: number; change: { from: number; to: number; insert: string }[] }[] {
-    const found: {
-        from: number;
-        to: number;
-        change: { from: number; to: number; insert: string }[];
-    }[] = [];
+type Fix = { from: number; to: number; change: { from: number; to: number; insert: string }[] };
+
+/** For every underline that `pick` accepts, the change of the suggestion it returns, without overlaps */
+function changesFor(view: EditorView, pick: (underline: api.LTLint) => string | undefined): Fix[] {
+    const found: Fix[] = [];
     view.state.field(underlineDecoration).between(0, view.state.doc.length, (from, to, value) => {
         const underline = (value.spec as { underline?: api.LTLint }).underline;
-        if (underline?.ruleId !== ruleId) return;
-        const change = suggestionChange(underline, { from, to }, 0);
+        const replacement = underline && pick(underline);
+        if (replacement === undefined) return;
+        // Each underline applies its own edit for that suggestion, which keeps its formatting
+        const index = underline!.replacements.indexOf(replacement);
+        const change = index < 0 ? null : suggestionChange(underline!, { from, to }, index);
         if (change) found.push({ from, to, change });
     });
     return nonOverlapping(found);
@@ -74,13 +73,25 @@ function createTooltip(
         });
 
         // The plugin's own rules have one mechanical fix, so all of them can be applied
-        // at once, e.g. every “cita” to «cita»
-        const all = FIX_ALL.test(ruleId) ? sameRuleChanges(view, ruleId) : [];
+        // at once, e.g. every “cita” to «cita». The same misspelled word, wherever it
+        // occurs, can take the same correction: every «errorr» to «error».
+        const first = match.replacements[0];
+        let all: Fix[] = [];
+        let label = "";
+        if (FIX_ALL.test(ruleId)) {
+            all = changesFor(view, u => (u.ruleId === ruleId ? u.replacements[0] : undefined));
+            label = `Fix all ${all.length} in this note`;
+        } else if (isSpelling(category, ruleId) && first !== undefined && match.text) {
+            all = changesFor(view, u =>
+                u.text === match.text && isSpelling(u.categoryId, u.ruleId) ? first : undefined,
+            );
+            label = `Change all ${all.length} to "${first}"`;
+        }
         if (all.length > 1) {
             root.createDiv({ cls: "lt-fix-all-row" }, row => {
                 row.createDiv({ cls: "lt-fix-all" }, button => {
                     setIcon(button.createSpan(), "check-check");
-                    button.createSpan({ text: `Fix all ${all.length} in this note` });
+                    button.createSpan({ text: label });
                     button.onclick = () => {
                         view.dispatch({
                             changes: all.flatMap(c => c.change),

@@ -106,7 +106,7 @@ LanguageTool's British English marks "realise" and "organise" and suggests "real
 
 ### Ignored words
 
-Words can be added to the dictionary from the editor and removed again under Settings → Language Tool → Spellcheck dictionary.
+Words can be added to the dictionary from the editor and removed again under Settings → Language Tool → Spellcheck dictionary. When the same misspelled word appears more than once in a note, its suggestion box also offers "Change all … to …", which corrects every occurrence with the first suggestion in one step. Only the identical word counts: «Errorr» at the start of a sentence is not changed with «errorr».
 
 ## Note-specific settings
 
