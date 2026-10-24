@@ -779,7 +779,7 @@ export class LTSettingsTab extends PluginSettingTab {
                         name: "Spanish typography (RAE)",
                         desc: createFragment(frag => {
                             frag.appendText(
-                                "Check Spanish text against rules of the RAE's Libro de estilo that LanguageTool lacks: full stops after closing quotation marks and brackets, em dashes, ranges, thousands, percentages, dates, capitalised months, positions and titles, and «angular» quotation marks.",
+                                "Check Spanish text against rules of the RAE's Libro de estilo that LanguageTool lacks: full stops after closing quotation marks and brackets, em dashes, ranges, thousands, percentages, dates, capitalised months, positions and titles, «angular» quotation marks, and quotation marks combined with italics.",
                             );
                             frag.createEl("br");
                             frag.appendText('Each rule can be turned off with "Disable rule".');

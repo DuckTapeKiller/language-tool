@@ -1,4 +1,4 @@
-import { EditorView, Tooltip, ViewPlugin, keymap, showTooltip } from "@codemirror/view";
+import { EditorView, Tooltip, ViewPlugin, keymap, showTooltip, tooltips } from "@codemirror/view";
 import { EditorState, Extension, StateEffect, StateField } from "@codemirror/state";
 import { categoryCssClass, isSpelling, suggestionChange } from "../helpers";
 import { ButtonComponent, setIcon } from "obsidian";
@@ -44,6 +44,8 @@ function createTooltip(
                             changes: change,
                             effects: [clearUnderlinesInRange.of(range)],
                         });
+                        // The button took the focus; give it back, so typing and undo work
+                        view.focus();
                     });
                 });
             });
@@ -57,14 +59,17 @@ function createTooltip(
                     button.onclick = () => {
                         // Add to global dictionary, removing other underlines with the same word
                         plugin.addToDictionary(match.text, view).catch(e => console.error(e));
+                        view.focus();
                     };
                 });
             } else {
                 container.createDiv({ cls: "lt-ignore-btn" }, button => {
                     setIcon(button.createSpan(), "cross");
                     button.createSpan({ text: "Ignore" });
-                    button.onclick = () =>
+                    button.onclick = () => {
                         view.dispatch({ effects: [clearUnderlinesInRange.of(range)] });
+                        view.focus();
+                    };
                 });
                 if (category !== "SYNONYMS") {
                     container.createDiv({ cls: "lt-ignore-btn" }, button => {
@@ -73,6 +78,7 @@ function createTooltip(
                         button.onclick = () => {
                             // Remove other underlines of the same rule
                             plugin.disableRule(ruleId, view).catch(e => console.error(e));
+                            view.focus();
                         };
                     });
                 }
@@ -287,7 +293,10 @@ function suggestions(plugin: LanguageToolPlugin): Extension {
             },
         },
     ]);
-    return [field, escape, hoverListener];
+    // Tooltips go where they fit in the visible editor, not in the whole window, where the
+    // header of the tab would cover a tooltip shown above a line near the top
+    const space = tooltips({ tooltipSpace: view => view.scrollDOM.getBoundingClientRect() });
+    return [field, escape, hoverListener, space];
 }
 
 export function buildHoverTooltip(plugin: LanguageToolPlugin): Extension {
@@ -324,7 +333,17 @@ export const baseTheme = EditorView.baseTheme({
                 position: "relative",
                 "& > .lt-buttoncontainer": {
                     "&:not(:empty)": { paddingTop: "10px" },
-                    "& > button": { marginRight: "4px", marginBottom: "4px", padding: "4px 6px" },
+                    "& > button": {
+                        marginRight: "4px",
+                        marginBottom: "4px",
+                        padding: "4px 6px",
+                        // Long suggestions wrap instead of being cut off
+                        maxWidth: "100%",
+                        height: "auto",
+                        whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        textAlign: "left",
+                    },
                 },
             },
             "& > .lt-ignore-container": {

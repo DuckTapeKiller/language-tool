@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { AnnotatedText } from "../annotated";
-import { baseLanguageCodes, checkParams, planRequests, resolveLanguage } from "../api";
+import {
+    baseLanguageCodes,
+    checkParams,
+    italicQuotations,
+    planRequests,
+    resolveLanguage,
+} from "../api";
 import { cmpIgnoreCase, isSpelling, nonOverlapping, suggestionChange } from "../helpers";
 import { obsidianSyntax, SyntaxTree } from "../markdown/parser";
 import { applyNoteSettings } from "../noteSettings";
@@ -411,5 +417,44 @@ describe("Obsidian syntax", () => {
         const source = "Antes %%x%% y #tag después ==resaltado== fin. ^id";
         const { annotations } = new SyntaxTree(source).annotate(undefined);
         expect(annotations.length()).toBe(source.length);
+    });
+});
+
+describe("italics inside quotation marks", () => {
+    // The fixes offered for a note, each applied to the whole note
+    function fixes(source: string): string[][] {
+        const { offset, annotations } = new SyntaxTree(source).annotate(undefined);
+        const start = offset + annotations.optimize();
+        const text = new Set(annotations.plainText().raw.filter(r => r != null));
+        return italicQuotations(source, start, r => text.has(r)).map(m =>
+            m.edits.map(edits => {
+                let result = source;
+                for (const e of [...edits!].sort((a, b) => b.from - a.from)) {
+                    const at = start + m.from;
+                    result = result.slice(0, at + e.from) + e.insert + result.slice(at + e.to);
+                }
+                return result;
+            }),
+        );
+    }
+
+    test("both fixes: italics without quotation marks, or «» without italics", () => {
+        expect(fixes("El libro “*At Day's Close*” (2005).")).toEqual([
+            ["El libro *At Day's Close* (2005).", "El libro «At Day's Close» (2005)."],
+        ]);
+        expect(fixes("Leyó «_Cien años de soledad_» dos veces.")).toEqual([
+            ["Leyó _Cien años de soledad_ dos veces.", "Leyó «Cien años de soledad» dos veces."],
+        ]);
+        expect(fixes('Dijo "*no hay motivo*" y se fue.')).toEqual([
+            ["Dijo *no hay motivo* y se fue.", "Dijo «no hay motivo» y se fue."],
+        ]);
+    });
+
+    test("italics in part of a quotation, bold and literal asterisks are left alone", () => {
+        expect(fixes("Dijo «el *déficit* creció» ayer.")).toEqual([]);
+        expect(fixes("Escribió “**una crisis**” en su columna.")).toEqual([]);
+        expect(fixes("Puso “*a* y *b*” en la lista.")).toEqual([]);
+        expect(fixes("Escribió “\\*literal\\*” así.")).toEqual([]);
+        expect(fixes('Mezcló “*comillas*" distintas.')).toEqual([]);
     });
 });

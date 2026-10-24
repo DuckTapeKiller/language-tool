@@ -175,3 +175,52 @@ describe.skipIf(!available)(`Spanish varieties with ${server}`, () => {
         expect(await check(text, { ...variety("es-AR"), staticLanguage: "es" })).toEqual([]);
     });
 });
+
+describe.skipIf(!available)(`Italics inside quotation marks with ${server}`, () => {
+    test("the rule replaces the «» suggestion and keeps spelling inside", async () => {
+        const text =
+            "Roger Ekirch, profesor de historia en la Universidad Virginia Tech, en Estados Unidos y autor del libro “*At Day's Close: A History of Nighttime*” (Al final del día: una historia de la noche).";
+        const options: LTOptions = {
+            ...DEFAULT_SETTINGS,
+            endpoint: "custom",
+            serverUrl: server,
+            preferredLanguages: ["en", "es"],
+            otherLanguages: "ignore",
+        };
+        const { offset, annotations } = new SyntaxTree(text).annotate(undefined);
+        const lints = await api.check(
+            options,
+            null,
+            offset + annotations.optimize(),
+            annotations,
+            text,
+        );
+        const rules = lints.map(l => l.ruleId);
+        expect(rules).toContain("RAE_COMILLAS_Y_CURSIVA");
+        expect(rules).not.toContain("RAE_COMILLAS_ANGULARES");
+        // Spelling inside the quotation is still reported
+        expect(lints.some(l => text.slice(l.range.from, l.range.to) === "Close")).toBeTrue();
+        const italic = lints.find(l => l.ruleId === "RAE_COMILLAS_Y_CURSIVA")!;
+        expect(text.slice(italic.range.from, italic.range.to)).toBe(
+            "“*At Day's Close: A History of Nighttime*”",
+        );
+        expect(italic.replacements).toEqual([
+            "*At Day's Close: A History of Nighttime*",
+            "«At Day's Close: A History of Nighttime»",
+        ]);
+    });
+
+    test("quotation marks without italics still get the «» rule", async () => {
+        const text = "El periodista escribió “una crisis sin precedentes” en su columna.";
+        const options: LTOptions = { ...DEFAULT_SETTINGS, endpoint: "custom", serverUrl: server };
+        const { offset, annotations } = new SyntaxTree(text).annotate(undefined);
+        const lints = await api.check(
+            options,
+            null,
+            offset + annotations.optimize(),
+            annotations,
+            text,
+        );
+        expect(lints.map(l => l.ruleId)).toContain("RAE_COMILLAS_ANGULARES");
+    });
+});

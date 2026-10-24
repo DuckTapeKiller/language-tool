@@ -191,9 +191,72 @@ export async function check(
 /// Categories of LanguageTool matches that a more complete RAE match may replace
 const REPLACEABLE = new Set(["CASING", "TYPOGRAPHY", "PUNCTUATION"]);
 
+/** A match of the plugin's own rules, in raw positions of the checked text */
+export interface LocalMatch {
+    from: number;
+    to: number;
+    ruleId: string;
+    categoryId: string;
+    title: string;
+    message: string;
+    replacements: string[];
+    /// For each replacement, the changes relative to `from`, or null if they would touch markup
+    edits: (TextEdit[] | null)[];
+}
+
+/// Closing quotation mark for each opening one
+const QUOTE_PAIRS: Record<string, string> = { "“": "”", '"': '"', "«": "»" };
+
+/**
+ * Quotations whose whole text is in italics, such as “*At Day's Close*”.
+ * Quotation marks and italics are never combined; as a title of a complete work goes in
+ * italics and a quotation or part of a work in quotation marks, both fixes are offered.
+ * `offset` is the position of the checked text in `source`, and `isText` tells whether
+ * a raw position of the checked text is text, as opposed to markup such as "*".
+ */
+export function italicQuotations(
+    source: string,
+    offset: number,
+    isText: (raw: number) => boolean,
+): LocalMatch[] {
+    const found: LocalMatch[] = [];
+    for (const m of source.matchAll(/([“"«])([*_])([^*_\n]+)\2([”"»])/g)) {
+        if (QUOTE_PAIRS[m[1]] !== m[4]) continue;
+        const open = m.index - offset;
+        const close = open + m[0].length - 1;
+        // The quotation marks are text, and the "*" around the text are italics, not characters
+        if (!isText(open) || !isText(close) || isText(open + 1) || isText(close - 1)) continue;
+        const [, , marker, inner] = m;
+        const length = close - open + 1;
+        found.push({
+            from: open,
+            to: close + 1,
+            ruleId: "RAE_COMILLAS_Y_CURSIVA",
+            categoryId: "TYPOGRAPHY",
+            title: "Comillas y cursiva a la vez",
+            message:
+                "Las comillas y la cursiva no se combinan: cada una basta. Un título de obra completa (libro, periódico, película) va en cursiva y sin comillas; una cita o una parte de una obra (capítulo, artículo, canción), entre comillas y sin cursiva.",
+            replacements: [`${marker}${inner}${marker}`, `«${inner}»`],
+            edits: [
+                // Keep the italics: drop the quotation marks
+                [
+                    { from: 0, to: 1, insert: "" },
+                    { from: length - 1, to: length, insert: "" },
+                ],
+                // Keep the quotation, as «»: drop the italics
+                [
+                    { from: 0, to: 2, insert: "«" },
+                    { from: length - 2, to: length, insert: "»" },
+                ],
+            ],
+        });
+    }
+    return found;
+}
+
 /**
  * Add the matches of the RAE rules that LanguageTool lacks, for text detected as Spanish.
- * `source` is the note, which tells where the headings are.
+ * `source` is the note, which tells where the headings and the italics are.
  */
 function withSpanishLints(
     options: Readonly<LTOptions>,
@@ -216,16 +279,34 @@ function withSpanishLints(
         }
     }
 
-    const result: LTLint[] = [];
-    const replaced = new Set<LTLint>();
+    const local: LocalMatch[] = source ? italicQuotations(source, offset, r => plainAt.has(r)) : [];
     for (const m of spanishRules(text, { headings })) {
-        if (options.disabledRules.includes(m.ruleId)) continue;
-        if (options.disabledCategories.includes(m.categoryId)) continue;
         // The match must start and end on text of the note, not on markup
         const from = raw[m.from];
         const last = raw[m.to - 1];
         if (from == null || last == null) continue;
-        const range = { from: offset + from, to: offset + last + 1 };
+        // Quotation marks around italics are handled as a whole by the rule above
+        if (
+            m.ruleId === "RAE_COMILLAS_ANGULARES" &&
+            local.some(
+                l => l.ruleId === "RAE_COMILLAS_Y_CURSIVA" && l.from < last + 1 && l.to > from,
+            )
+        )
+            continue;
+        local.push({
+            ...m,
+            from,
+            to: last + 1,
+            edits: m.replacements.map(r => annotated.safeEdits(from, last + 1, r)),
+        });
+    }
+
+    const result: LTLint[] = [];
+    const replaced = new Set<LTLint>();
+    for (const m of local) {
+        if (options.disabledRules.includes(m.ruleId)) continue;
+        if (options.disabledCategories.includes(m.categoryId)) continue;
+        const range = { from: offset + m.from, to: offset + m.to };
         // Where LanguageTool reports part of the same text, LanguageTool's match is kept,
         // unless it is a casing, typography or punctuation match the rule covers completely.
         // Spelling and grammar inside, e.g. inside a quotation, are always kept.
@@ -234,11 +315,11 @@ function withSpanishLints(
         for (const l of overlapping) if (REPLACEABLE.has(l.categoryId)) replaced.add(l);
         result.push({
             range,
-            text: text.slice(m.from, m.to),
+            text: annotated.extractSlice(m.from, m.to) ?? "",
             title: m.title,
             message: m.message,
             replacements: m.replacements,
-            edits: m.replacements.map(r => annotated.safeEdits(from, last + 1, r)),
+            edits: m.edits,
             categoryId: m.categoryId,
             ruleId: m.ruleId,
         });
