@@ -1,6 +1,6 @@
 import { EditorView, Tooltip, ViewPlugin, keymap, showTooltip, tooltips } from "@codemirror/view";
 import { EditorState, Extension, StateEffect, StateField } from "@codemirror/state";
-import { categoryCssClass, isSpelling, suggestionChange } from "../helpers";
+import { categoryCssClass, isSpelling, nonOverlapping, suggestionChange } from "../helpers";
 import { ButtonComponent, setIcon } from "obsidian";
 import { default as LanguageToolPlugin } from "../main";
 import { clearUnderlinesInRange, underlineDecoration } from "./underlines";
@@ -11,6 +11,28 @@ import { SUGGESTIONS } from "../settings";
 const TOOLTIP_HOST = "lt-tooltip-host";
 /// How long the mouse rests on an underline, or away from it, before the tooltip opens or closes
 const HOVER_TIME = 300;
+
+/// Rules whose matches can all be fixed at once: the plugin's own, except the one with two fixes
+const FIX_ALL = /^RAE_(?!COMILLAS_Y_CURSIVA$)/;
+
+/** The first suggestion of every underline of a rule in the note, without overlaps */
+function sameRuleChanges(
+    view: EditorView,
+    ruleId: string,
+): { from: number; to: number; change: { from: number; to: number; insert: string }[] }[] {
+    const found: {
+        from: number;
+        to: number;
+        change: { from: number; to: number; insert: string }[];
+    }[] = [];
+    view.state.field(underlineDecoration).between(0, view.state.doc.length, (from, to, value) => {
+        const underline = (value.spec as { underline?: api.LTLint }).underline;
+        if (underline?.ruleId !== ruleId) return;
+        const change = suggestionChange(underline, { from, to }, 0);
+        if (change) found.push({ from, to, change });
+    });
+    return nonOverlapping(found);
+}
 
 function createTooltip(
     plugin: LanguageToolPlugin,
@@ -50,6 +72,27 @@ function createTooltip(
                 });
             });
         });
+
+        // The plugin's own rules have one mechanical fix, so all of them can be applied
+        // at once, e.g. every “cita” to «cita»
+        const all = FIX_ALL.test(ruleId) ? sameRuleChanges(view, ruleId) : [];
+        if (all.length > 1) {
+            root.createDiv({ cls: "lt-fix-all-row" }, row => {
+                row.createDiv({ cls: "lt-fix-all" }, button => {
+                    setIcon(button.createSpan(), "check-check");
+                    button.createSpan({ text: `Fix all ${all.length} in this note` });
+                    button.onclick = () => {
+                        view.dispatch({
+                            changes: all.flatMap(c => c.change),
+                            effects: all.map(({ from, to }) =>
+                                clearUnderlinesInRange.of({ from, to }),
+                            ),
+                        });
+                        view.focus();
+                    };
+                });
+            });
+        }
 
         root.createDiv({ cls: "lt-ignore-container" }, container => {
             if (isSpelling(category, ruleId)) {
@@ -344,6 +387,20 @@ export const baseTheme = EditorView.baseTheme({
                         overflowWrap: "anywhere",
                         textAlign: "left",
                     },
+                },
+            },
+            "& > .lt-fix-all-row": {
+                padding: "0 12px 6px",
+                "& > .lt-fix-all": {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    fontSize: "var(--font-ui-small)",
+                    lineHeight: 1,
+                    cursor: "pointer",
+                    color: "var(--text-accent)",
+                    "& > span": { display: "flex" },
+                    "&:hover": { color: "var(--text-accent-hover)" },
                 },
             },
             "& > .lt-ignore-container": {

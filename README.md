@@ -79,7 +79,7 @@ LanguageTool checks Spanish spelling and grammar well, but misses much of the or
 | Colon after a letter greeting | Estimados vecinos, | Estimados vecinos: |
 | Em dashes joined to the aside | la subasta — la mayor del año — cerró | la subasta —la mayor del año— cerró |
 | Hyphen in ranges | 1998–2012 | 1998-2012 |
-| Thousands with a space | 1.250.000 · 1,250,000 | 1 250 000 |
+| Thousands with a space, none in four digits | 20.000 · 1.250.000 · 1,250,000 · 1.250 | 20 000 · 1 250 000 · 1250 |
 | Space before % | 40% | 40 % |
 | Dates in Spanish order | Octubre 30, 2020 | 30 de octubre de 2020 |
 | Months and days in lower case | el Lunes 3 de Enero | el lunes 3 de enero |
@@ -88,7 +88,7 @@ LanguageTool checks Spanish spelling and grammar well, but misses much of the or
 | «Angular» quotation marks first | “cita” · "cita" | «cita» |
 | Quotation marks or italics, not both | “*At Day's Close*” | *At Day's Close* (a complete work) · «At Day's Close» (a quotation or part of a work) |
 
-The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". For headings, every word after the first is lowered except proper names: words LanguageTool's dictionary only knows with a capital («Cartagena»), words the note writes with a capital in the middle of a sentence («la vida de Pedro de Heredia»), and acronyms («ONU»). For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation.
+The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". As their fixes are mechanical, the suggestion box also offers "Fix all … in this note", which applies the same fix everywhere the rule found it, for example every quotation to «», in one step that a single undo reverts. For headings, every word after the first is lowered except proper names: words LanguageTool's dictionary only knows with a capital («Cartagena»), words the note writes with a capital in the middle of a sentence («la vida de Pedro de Heredia»), and acronyms («ONU»). For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation.
 
 ### Language varieties
 

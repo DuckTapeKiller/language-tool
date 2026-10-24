@@ -75,9 +75,17 @@ describe("thousands", () => {
     test("are separated by a space", () => {
         expect(fix("Costó 1,250,000 pesos.")).toBe(`Costó 1${NB}250${NB}000 pesos.`);
         expect(fix("Costó 1.250.000 pesos.")).toBe(`Costó 1${NB}250${NB}000 pesos.`);
+        expect(fix("Asistieron 20.000 personas.")).toBe(`Asistieron 20${NB}000 personas.`);
+        expect(fix("Pagó 20.000,50 euros.")).toBe(`Pagó 20${NB}000,50 euros.`);
     });
-    test("years, decimals, codes and ambiguous numbers are left alone", () => {
+    test("four digits take no separator", () => {
+        expect(fix("Llegaron 1.250 soldados.")).toBe("Llegaron 1250 soldados.");
+        expect(fix("Cuesta 1.000 pesos.")).toBe("Cuesta 1000 pesos.");
+    });
+    test("years, decimals, codes, versions and correct numbers are left alone", () => {
         expect(ids("En 1998 había 3,5 millones; el código 28004; 6.10.2017; 3,500")).toEqual([]);
+        expect(ids("La versión 3.100.1 salió; 2.5 kg; 15.06 h.")).toEqual([]);
+        expect(ids(`Asistieron 20${NB}000 personas y 20 000 más.`)).toEqual([]);
     });
 });
 

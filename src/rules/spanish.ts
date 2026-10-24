@@ -208,14 +208,23 @@ const rules: Rule[] = [
                 "Los intervalos se escriben con guion, sin espacios. La semirraya es de la tipografía inglesa.",
             replacements: [`${m[1]}-${m[2]}`],
         })),
-    // 1,250,000 / 1.250.000 → 1 250 000
+    // 20.000 → 20 000; 1.250 → 1250; 1,250,000 → 1 250 000
     text => {
         const found: RuleMatch[] = [];
-        for (const m of text.matchAll(
-            /(?:^|[^\d.,])(\d{1,3}(?:([.,])\d{3})(?:\2\d{3})+)(?![\d.,]\d)/g,
-        )) {
+        const numbers = [
+            // A point followed by three digits separates thousands in Spanish text, where
+            // decimals take a comma: «20.000», «1.250.000», also before decimals «20.000,5»
+            ...text.matchAll(/(?:^|[^\d.,])(\d{1,3}(?:\.\d{3})+)(?!\d|\.\d)/g),
+            // A comma is the decimal separator, so only «1,250,000» is surely thousands
+            ...text.matchAll(/(?:^|[^\d.,])(\d{1,3}(?:,\d{3}){2,})(?!\d|[.,]\d)/g),
+        ];
+        for (const m of numbers) {
             const number = m[1];
             const from = m.index + m[0].length - number.length;
+            const digits = number.replace(/[.,]/g, "");
+            // Four digits take no separator; more are grouped by three from the right
+            const fixed =
+                digits.length <= 4 ? digits : digits.replace(/\B(?=(\d{3})+$)/g, THIN_SPACE);
             found.push({
                 ruleId: "RAE_SEPARADOR_MILLARES",
                 categoryId: "TYPOGRAPHY",
@@ -223,8 +232,10 @@ const rules: Rule[] = [
                 to: from + number.length,
                 title: "Separador de millares",
                 message:
-                    "Los millares se separan con un espacio fino, no con punto ni con coma, y solo en cifras de más de cuatro dígitos.",
-                replacements: [number.split(m[2]).join(THIN_SPACE)],
+                    digits.length <= 4
+                        ? "Las cifras de cuatro dígitos se escriben sin separador de millares."
+                        : "Los millares se separan con un espacio fino, no con punto ni con coma.",
+                replacements: [fixed],
             });
         }
         return found;
