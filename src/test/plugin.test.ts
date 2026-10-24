@@ -17,6 +17,9 @@ import { wikiLinkFromMarkdown } from "../markdown/mdast-wikilink";
 import { formattingOf, obsidianSyntax, SyntaxTree } from "../markdown/parser";
 import { applyNoteSettings } from "../noteSettings";
 import { DEFAULT_SETTINGS, LTOptions } from "../settings";
+import { ChangeSet } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { ChangeTracker } from "../editor/changes";
 
 function options(overrides: Partial<LTOptions> = {}): LTOptions {
     return { ...DEFAULT_SETTINGS, ...overrides };
@@ -627,5 +630,36 @@ describe("formatting check", () => {
         expect(formattingOf("Es ==muy== cierto %%nota%%")).toBe(
             formattingOf("Es ==muy== cierto. %%nota%%"),
         );
+    });
+});
+
+describe("results of a check while the note is edited", () => {
+    // A tracker on a stand-in editor, as a check starts on a document of this length
+    const tracker = (length: number) =>
+        new ChangeTracker({ state: { doc: { length } } } as unknown as EditorView);
+
+    test("move with the text before them", () => {
+        const t = tracker(40);
+        // "Hola" typed at the start
+        t.add(ChangeSet.of({ from: 0, insert: "Hola " }, 40));
+        expect(t.edited({ from: 20, to: 30 })).toBe(false);
+        expect(t.map({ from: 20, to: 30 })).toEqual({ from: 25, to: 35 });
+        t.stop();
+    });
+    test("are outdated where the text was edited", () => {
+        const t = tracker(40);
+        t.add(ChangeSet.of({ from: 22, to: 24, insert: "x" }, 40));
+        expect(t.edited({ from: 20, to: 30 })).toBe(true);
+        expect(t.edited({ from: 0, to: 10 })).toBe(false);
+        expect(t.map({ from: 30, to: 35 })).toEqual({ from: 29, to: 34 });
+        t.stop();
+    });
+    test("follow several edits in turn", () => {
+        const t = tracker(40);
+        t.add(ChangeSet.of({ from: 0, insert: "ab" }, 40));
+        t.add(ChangeSet.of({ from: 42, insert: "cd" }, 42));
+        expect(t.map({ from: 10, to: 12 })).toEqual({ from: 12, to: 14 });
+        expect(t.edited({ from: 38, to: 40 })).toBe(true);
+        t.stop();
     });
 });

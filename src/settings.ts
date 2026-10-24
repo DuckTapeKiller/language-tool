@@ -610,7 +610,7 @@ export class LTSettingsTab extends PluginSettingTab {
             },
             {
                 name: "Check notes when opened",
-                desc: "With automatic checking on, check the whole note when you open it.",
+                desc: "With automatic checking on, check the whole note when it is first shown in editing view, also after reading view.",
                 control: {
                     type: "toggle",
                     key: "checkOnOpen",

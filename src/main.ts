@@ -16,6 +16,7 @@ import { EditorView } from "@codemirror/view";
 import { ChangeSpec, StateEffect } from "@codemirror/state";
 import { endpointFromUrl, LTOptions, LTSettings, LTSettingsTab, SUGGESTIONS } from "./settings";
 import * as api from "./api";
+import { ChangeTracker } from "./editor/changes";
 import { underlineExtension } from "./editor/extension";
 import {
     addUnderline,
@@ -90,25 +91,38 @@ export default class LanguageToolPlugin extends Plugin {
         this.app.workspace.onLayoutReady(() => {
             this.settingTab.load().catch(e => console.error(e));
             this.syncDictionary().catch(e => console.error(e));
-            this.checkOpenedNote(this.app.workspace.getActiveFile());
+            this.checkShownNote();
         });
-        this.registerEvent(this.app.workspace.on("file-open", file => this.checkOpenedNote(file)));
+        // A note is checked when it is first shown in an editor: when it is opened, when its
+        // tab is selected, or when it is switched from reading view to editing view
+        this.registerEvent(this.app.workspace.on("file-open", () => this.checkShownNote()));
+        this.registerEvent(
+            this.app.workspace.on("active-leaf-change", () => this.checkShownNote()),
+        );
+        this.registerEvent(this.app.workspace.on("layout-change", () => this.checkShownNote()));
     }
 
-    /** With automatic checking, check a note when it is opened */
-    private checkOpenedNote(file: TFile | null) {
-        if (!file) return;
-        const settings = this.getFileSettings(file);
-        if (!settings.shouldAutoCheck || !settings.checkOnOpen) return;
-        // The editor shows the file only after the event
+    /// The note each editor has checked as a whole since it showed it
+    private checkedNotes = new WeakMap<EditorView, string>();
+
+    /** With automatic checking, check the note in the active editor if it has not been yet */
+    private checkShownNote() {
+        // The editor shows the note, and its mode, only after the event
         window.setTimeout(() => {
             const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (!view || view.file !== file || view.getMode() !== "source") return;
+            const file = view?.file;
+            if (!view || !file || view.getMode() !== "source") return;
+            const settings = this.getFileSettings(file);
+            if (!settings.shouldAutoCheck || !settings.checkOnOpen) return;
             // @ts-expect-error, not typed
             const editor = view.editor.cm as EditorView;
-            // Already checked, e.g. when returning to a tab
-            if (editor.state.field(underlineDecoration).size) return;
-            this.runDetection(editor, true).catch(e => this.autoCheckFailed(e));
+            // Already checked, e.g. when returning to its tab; edits are checked as they are made
+            if (this.checkedNotes.get(editor) === file.path) return;
+            this.checkedNotes.set(editor, file.path);
+            this.runDetection(editor, true).catch(e => {
+                this.checkedNotes.delete(editor);
+                this.autoCheckFailed(e);
+            });
         }, 100);
     }
 
@@ -581,18 +595,17 @@ export default class LanguageToolPlugin extends Plugin {
         const selection = editor.state.selection.main;
         if (!range && !selection.empty) range = { ...selection };
 
-        const state = editor.state;
-        const currentDoc = state.doc;
-        const text = state.sliceDoc(); // handles line endings
+        const text = editor.state.sliceDoc(); // handles line endings
         if (!text.trim()) return false;
 
-        let matches: (api.LTMatch & { range: api.LTRange })[];
+        // Edits made during the check move its results, or make them outdated
+        const tracker = new ChangeTracker(editor);
+        let found = 0;
         let longNotice: Notice | undefined = undefined;
-        let syntax: markdown.SyntaxTree;
         try {
             this.setStatusBarWorking();
 
-            syntax = new markdown.SyntaxTree(text);
+            const syntax = new markdown.SyntaxTree(text);
 
             let { offset, annotations } = syntax.annotate(range);
             // reduce request size
@@ -607,20 +620,38 @@ export default class LanguageToolPlugin extends Plugin {
                 `Checking ${annotations.plainLength()} characters in ${requests.length} requests...`,
             );
 
-            matches = [];
+            // The previous underlines of the checked text go; the new ones are shown as each
+            // request returns, so a long note shows its first suggestions quickly
+            editor.dispatch({
+                effects: range
+                    ? clearUnderlinesInRange.of({ from: offset, to: offset + annotations.length() })
+                    : clearAllUnderlines.of(null),
+            });
+
             const apiKey = this.settings.getApiKey();
             for (let i = 0; i < requests.length; i += parallel) {
+                const batch = requests.slice(i, i + parallel);
                 const results = await Promise.all(
-                    requests
-                        .slice(i, i + parallel)
-                        .map(r => api.check(settings, apiKey, r.offset, r.text, text)),
+                    batch.map(r => api.check(settings, apiKey, r.offset, r.text, text)),
                 );
-                matches.push(...results.flat());
-                // The results are discarded below if the document has changed
-                if (currentDoc !== editor.state.doc) break;
+                const effects: StateEffect<api.LTLint>[] = [];
+                batch.forEach((request, k) => {
+                    // Text edited in the meantime is checked again by the automatic check
+                    const checked = {
+                        from: request.offset,
+                        to: request.offset + request.text.length(),
+                    };
+                    if (tracker.edited(checked)) return;
+                    for (const match of results[k]) {
+                        if (this.ignored(match, settings, syntax)) continue;
+                        effects.push(
+                            addUnderline.of({ ...match, range: tracker.map(match.range) }),
+                        );
+                    }
+                });
+                if (effects.length) editor.dispatch({ effects });
+                found += effects.length;
             }
-            // update range to the checked text
-            if (range) range = { from: offset, to: offset + annotations.length() };
         } catch (e) {
             console.error(e);
             if (e instanceof Error) {
@@ -630,59 +661,33 @@ export default class LanguageToolPlugin extends Plugin {
             if (auto) throw e; // re-throw for auto-checks
             return true;
         } finally {
+            tracker.stop();
             this.setStatusBarReady();
             if (longNotice) longNotice.hide();
         }
 
-        // Avoid updating the underlines if the document has changed
-        // As the codemirror state is immutable, we can directly compare the text objects
-        if (currentDoc !== editor.state.doc) return true;
-
-        const effects: StateEffect<null | api.LTLint | api.LTRange>[] = [];
-
-        // remove previous underlines
-        if (range) {
-            effects.push(clearUnderlinesInRange.of(range));
-        } else {
-            effects.push(clearAllUnderlines.of(null));
-        }
-
-        if (matches) {
-            const spellcheckDictionary = settings.dictionary;
-
-            for (const match of matches) {
-                // Fixes a bug where the match is outside the document
-                if (match.range.to > editor.state.doc.length) continue;
-                // Ignore typos that are in the spellcheck dictionary
-                if (
-                    isSpelling(match.categoryId, match.ruleId) &&
-                    spellcheckDictionary.includes(match.text.trim())
-                )
-                    continue;
-
-                // Ignore whitespace lints inside tables
-                if (
-                    match.categoryId === "WHITESPACE" &&
-                    (syntax.isInside(match.range.from, "table") ||
-                        syntax.isInside(match.range.to, "table"))
-                )
-                    continue;
-
-                // TODO: LanguageTool's ranges often include whitespace before/after lints.
-                // As whitespace is used to hide markdown markup, applying these lints often breaks the format of
-                // for example paragraphs, lists, or tables.
-
-                effects.push(addUnderline.of(match));
-            }
-        }
-
-        if (effects.length) {
-            editor.dispatch({ effects });
-        }
-        console.debug(`Found ${effects.length - 1} suggestions.`);
+        console.debug(`Found ${found} suggestions.`);
         // reset auto-check disable on successful check
         this.autoCheckSuppressErrorsUntil = 0;
-        return effects.length > 1;
+        return found > 0;
+    }
+
+    /** Whether a match is not shown: a word in the dictionary, or whitespace in a table */
+    private ignored(
+        match: api.LTLint,
+        settings: Readonly<LTOptions>,
+        syntax: markdown.SyntaxTree,
+    ): boolean {
+        if (
+            isSpelling(match.categoryId, match.ruleId) &&
+            settings.dictionary.includes(match.text.trim())
+        )
+            return true;
+        // LanguageTool's whitespace in tables is the markup that draws the table
+        return (
+            match.categoryId === "WHITESPACE" &&
+            (syntax.isInside(match.range.from, "table") || syntax.isInside(match.range.to, "table"))
+        );
     }
 
     /**

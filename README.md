@@ -12,7 +12,7 @@ Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/ob
 - **A language for each paragraph.** With your own server, every paragraph can be checked in its own language, so a note can mix English and Spanish, for example.
 - **Text in other languages** can be left unchecked, so a quotation in French gets no French suggestions.
 - **Click an underline to see its suggestions.** Hovering opens them too, without the misses after scrolling that CodeMirror's hover tooltips had. Escape closes them.
-- **Automatic checking checks a note when you open it**, not only the paragraphs you edit.
+- **Automatic checking checks the whole note when it is shown in editing view**, not only the paragraphs you edit: when you open it, switch to its tab, or switch it from reading view to editing view. The underlines appear as each part of the note comes back from the server, and typing while a note is being checked does not discard the results.
 - **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact, and a space forgotten next to a marker goes on its outer side: «y\*\*aseguró\*\*» becomes «y \*\*aseguró\*\*». Before a suggestion next to markup is offered, it is tried on its paragraph and the markdown is read again; if any formatting would change, the suggestion is shown but cannot be applied.
 - **Spanish typography and grammar (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as dialogue punctuation, rayas in asides, the opening «¿» and «¡», abbreviations, Latin phrases in italics, thousands, dates, «angular» quotation marks, and constructions such as «Si tendría», «La dije que» or «en aras a».
 - **British spelling.** "-ise" and "-ize" are both accepted in British English, unless you ask for Oxford spelling.
@@ -45,7 +45,7 @@ Hotkeys for the commands can be set under Settings → Hotkeys; search for "Lang
 
 - **Check text** checks the whole note, or only the selected text. Click an underlined word, or rest the mouse on it, to see its suggestions, with the option to add the word to your dictionary or to disable the rule.
 - **Clear suggestions** removes all underlines.
-- **Toggle automatic checking** turns checking as you type on or off. With it on, a note is also checked when you open it, unless you turn off "Check notes when opened".
+- **Toggle automatic checking** turns checking as you type on or off. With it on, a note is also checked as a whole the first time it is shown in editing view, for example when you open it or switch it from reading view to editing view, unless you turn off "Check notes when opened".
 - **Accept all suggestions** applies the first suggestion of every underline.
 
 In Live Preview, callouts and tables are drawn as rendered blocks, which show no underlines. Click into one to edit it, and its underlines appear.
