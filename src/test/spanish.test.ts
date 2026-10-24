@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RuleMatch, spanishRules } from "../rules/spanish";
+import { RuleMatch, sentenceCase, spanishRules } from "../rules/spanish";
 
 /** The text with the first suggestion of every match applied */
 const context = (text: string, heading: boolean) => ({
@@ -126,7 +126,10 @@ describe("positions and titles", () => {
 describe("title case in headings", () => {
     test("is reported in headings", () => {
         expect(ids("Historia Y Desarrollo De La Ciudad", true)).toEqual(["RAE_TITULO_MAYUSCULAS"]);
-        expect(fix("Cien Años De Soledad", true)).toBe("Cien Años de Soledad");
+        expect(fix("Cien Años De Soledad", true)).toBe("Cien años de soledad");
+        expect(fix("Historia Y Desarrollo De La Ciudad", true)).toBe(
+            "Historia y desarrollo de la ciudad",
+        );
     });
     test("proper names and normal headings are left alone", () => {
         expect(ids("Quién fue Pedro de Heredia", true)).toEqual([]);
@@ -165,4 +168,21 @@ describe("the skill's correct examples", () => {
         "Me llamo Lucía. ¿Tú?",
     ];
     for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+});
+
+describe("sentence case", () => {
+    test("lowers every word after the first", () =>
+        expect(sentenceCase("Historia Y Desarrollo De La Ciudad")).toBe(
+            "Historia y desarrollo de la ciudad",
+        ));
+    test("keeps acronyms and the words it is told are names", () => {
+        expect(sentenceCase("Informe De La ONU Sobre El Clima")).toBe(
+            "Informe de la ONU sobre el clima",
+        );
+        const title = "La Historia De Pedro De Heredia En Cartagena";
+        const names = new Set(["Pedro", "Heredia", "Cartagena"]);
+        expect(sentenceCase(title, w => names.has(w))).toBe(
+            "La historia de Pedro de Heredia en Cartagena",
+        );
+    });
 });

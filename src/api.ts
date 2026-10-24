@@ -3,7 +3,7 @@ import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
 import { AnnotatedText, TextEdit } from "./annotated";
 import { errorMessage } from "./helpers";
-import { spanishRules } from "./rules/spanish";
+import { sentenceCase, spanishRules } from "./rules/spanish";
 
 /** LanguageTool Check API: https://languagetool.org/http-api/swagger-ui */
 
@@ -183,9 +183,82 @@ export async function check(
     });
 
     const detected = jsonPath<string>("$.language.code@string()", res.json as JsonValue);
-    if (options.spanishRules && detected.toLowerCase().startsWith("es"))
-        return withSpanishLints(options, offset, annotated, lints, source);
+    if (options.spanishRules && detected.toLowerCase().startsWith("es")) {
+        const all = withSpanishLints(options, offset, annotated, lints, source);
+        return keepProperNames(options, apiKey, detected, offset, annotated, all, source);
+    }
     return lints;
+}
+
+/**
+ * Headings in title case are put in sentence case, but proper names keep their capital.
+ * A word is a proper name if LanguageTool marks its lowered form as a misspelling of it
+ * («cartagena» → «Cartagena»), or if the note writes it with a capital in the middle of
+ * a sentence («la vida de Pedro de Heredia»). A heading whose capitals are all proper
+ * names is not title case after all, and is not reported.
+ */
+async function keepProperNames(
+    options: Readonly<LTOptions>,
+    apiKey: string | null,
+    language: string,
+    offset: number,
+    annotated: AnnotatedText,
+    lints: LTLint[],
+    source?: string,
+): Promise<LTLint[]> {
+    // The note without its headings, where capitals mid-sentence show proper names
+    const body = source?.replace(/^#{1,6}[ \t].*$/gm, "") ?? "";
+    const capitalisedInBody = (word: string) =>
+        new RegExp(`[\\p{Ll}\\d,;:)»”]\\s+${word}(?![\\p{L}])`, "u").test(body);
+    const result: LTLint[] = [];
+    for (const lint of lints) {
+        if (lint.ruleId !== "RAE_TITULO_MAYUSCULAS" || !lint.text) {
+            result.push(lint);
+            continue;
+        }
+        const original = lint.text;
+        const lowered = sentenceCase(original);
+        const names = new Set<number>();
+        try {
+            const params: Record<string, string> = { text: lowered, language };
+            if (endpointFromUrl(options.serverUrl) !== "public" && apiKey && options.username) {
+                params.username = options.username;
+                params.apiKey = apiKey;
+            }
+            const res = await requestUrlChecked({
+                url: `${options.serverUrl}/v2/check`,
+                method: "POST",
+                body: new URLSearchParams(params).toString(),
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    Accept: "application/json",
+                },
+            });
+            for (const match of jsonPathA<JsonValue>("$.matches[*]", res.json as JsonValue)) {
+                const at = jsonPath<number>("$.offset@number()", match);
+                const length = jsonPath<number>("$.length@number()", match);
+                const word = original.slice(at, at + length);
+                const suggestions = jsonPathA<string>("$.replacements[*].value@string()", match);
+                if (suggestions.includes(word)) names.add(at);
+            }
+        } catch (e) {
+            // Without LanguageTool's answer, the plain sentence case is still offered
+            console.debug("Could not check the proper names of a title", e);
+        }
+        const fixed = sentenceCase(
+            original,
+            (word, index) => names.has(index) || capitalisedInBody(word),
+        );
+        if (fixed === original) continue;
+        const from = lint.range.from - offset;
+        const to = lint.range.to - offset;
+        result.push({
+            ...lint,
+            replacements: [fixed],
+            edits: [annotated.safeEdits(from, to, fixed)],
+        });
+    }
+    return result;
 }
 
 /// Categories of LanguageTool matches that a more complete RAE match may replace

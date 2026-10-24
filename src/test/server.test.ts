@@ -224,3 +224,45 @@ describe.skipIf(!available)(`Italics inside quotation marks with ${server}`, () 
         expect(lints.map(l => l.ruleId)).toContain("RAE_COMILLAS_ANGULARES");
     });
 });
+
+describe.skipIf(!available)(`Title case in Spanish headings with ${server}`, () => {
+    async function headingFix(
+        heading: string,
+        body = "Un párrafo en español para que el texto se detecte bien.",
+    ): Promise<string[]> {
+        const text = `## ${heading}\n\n${body}`;
+        const options: LTOptions = {
+            ...DEFAULT_SETTINGS,
+            endpoint: "custom",
+            serverUrl: server,
+            staticLanguage: "es",
+        };
+        const { offset, annotations } = new SyntaxTree(text).annotate(undefined);
+        const lints = await api.check(
+            options,
+            null,
+            offset + annotations.optimize(),
+            annotations,
+            text,
+        );
+        return lints.filter(l => l.ruleId === "RAE_TITULO_MAYUSCULAS").map(l => l.replacements[0]);
+    }
+
+    test("the title is put in sentence case", async () => {
+        expect(await headingFix("Historia Y Desarrollo De La Ciudad")).toEqual([
+            "Historia y desarrollo de la ciudad",
+        ]);
+    });
+
+    test("proper names keep their capital", async () => {
+        // LanguageTool knows «Heredia» and «Cartagena»; the note shows «Pedro» is a name
+        const body = "La vida de Pedro de Heredia fue larga y llena de viajes.";
+        expect(await headingFix("La Historia De Pedro De Heredia En Cartagena", body)).toEqual([
+            "La historia de Pedro de Heredia en Cartagena",
+        ]);
+    });
+
+    test("names alone are not title case", async () => {
+        expect(await headingFix("Gabriel García Márquez")).toEqual([]);
+    });
+});

@@ -350,14 +350,8 @@ const rules: Rule[] = [
                 title: "Mayúsculas en el título",
                 message:
                     "En español, los títulos solo llevan mayúscula en la primera palabra y en los nombres propios.",
-                // Function words are never proper names, so they can be lowered safely
-                replacements: [
-                    text
-                        .slice(from, to)
-                        .replace(/\p{L}+/gu, (w, offset: number) =>
-                            offset > 0 && FUNCTION_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : w,
-                        ),
-                ],
+                // Proper names are capitalised again by the caller, which can ask LanguageTool
+                replacements: [sentenceCase(text.slice(from, to))],
             });
         }
         return found;
@@ -392,6 +386,25 @@ const rules: Rule[] = [
         return found;
     },
 ];
+
+/**
+ * A title in sentence case: only the first word keeps its capital, and words that `keep`
+ * says are proper names. Words in capitals, such as acronyms («ONU»), are left as they are.
+ */
+export function sentenceCase(
+    title: string,
+    keep: (word: string, index: number) => boolean = () => false,
+): string {
+    let first = true;
+    return title.replace(/\p{L}+/gu, (word, index: number) => {
+        if (first) {
+            first = false;
+            return word;
+        }
+        if (word.length > 1 && word === word.toUpperCase()) return word;
+        return keep(word, index) ? word : word.toLowerCase();
+    });
+}
 
 /** Apply the rules to text in Spanish */
 export function spanishRules(text: string, context: Context): RuleMatch[] {

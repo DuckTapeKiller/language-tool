@@ -88,7 +88,7 @@ LanguageTool checks Spanish spelling and grammar well, but misses much of the or
 | «Angular» quotation marks first | “cita” · "cita" | «cita» |
 | Quotation marks or italics, not both | “*At Day's Close*” | *At Day's Close* (a complete work) · «At Day's Close» (a quotation or part of a work) |
 
-The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". For headings, only the articles and prepositions are lowered, as the plugin cannot tell which other words are proper names. For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation.
+The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". For headings, every word after the first is lowered except proper names: words LanguageTool's dictionary only knows with a capital («Cartagena»), words the note writes with a capital in the middle of a sentence («la vida de Pedro de Heredia»), and acronyms («ONU»). For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation.
 
 ### Language varieties
 
