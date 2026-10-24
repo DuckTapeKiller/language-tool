@@ -61,6 +61,313 @@ describe("em dashes", () => {
     });
 });
 
+describe("dialogue", () => {
+    // The examples of the Libro de estilo and of Diálogos, which must not be reported
+    const correct = [
+        "—Hola —saludó Juan.",
+        "—¿Qué tal? —dijo Silvia.",
+        "—Bien —contestó Juan—. ¿Tú?",
+        "—También bien —respondió Silvia—, o eso creo.",
+        "—¿Qué tal? —dijo Silvia—. ¿Todo en orden?",
+        "—¡Sí! —contestó Juan—. ¿Tú?",
+        "—También bien… —respondió Silvia—, o eso creo.",
+        "—Hola, Silvia —dijo Juan—, ¿qué tal?",
+        "—Todo ha ido bien —dijo Silvia—; al menos, eso creo.",
+        "—¿Estás contenta? —quiso saber Juan.",
+        "—Sí —sonrió Silvia.",
+        "—Hola, Silvia. —Juan se ruborizó un poco—. ¿Qué tal?",
+        "—Bien. —Silvia notó que Juan se ruborizaba y dijo—: ¿Estás bien?",
+        "—Sí. —Juan dijo esto tranquilizándose un poco. Y añadió—: Estoy un poco cansado.",
+        "―Espero que todo salga bien ―dijo Azucena con gesto ilusionado.",
+        "―Lo principal es sentirse viva ―añadió Pilar―. Afortunada o desafortunada, pero viva.",
+        "―¡Qué le vamos a hacer! ―exclamó resignada doña Patro.",
+        "―Está bien ―dijo Carlos―; lo haré, pero que sea la última vez que me lo pides.",
+        "―No se moleste. ―Cerró la puerta y salió de mala gana.",
+        "―Me voy ya. ―Se puso en pie con gesto decidido―. No hace falta que me acompañe.",
+        "―¡Esto que has hecho ―gritó― es una auténtica locura!",
+        "―Solo nos queda esto ―le enseñó unos pocos billetes― para el resto del viaje.",
+        "―Anoche estuve en una fiesta ―me confesó, y añadió―: Conocí a personas muy interesantes.",
+        "«Es imprescindible ―señaló el ministro― que se refuercen los sistemas».",
+        "—¡No puedo oírte! —gritó Kismine, atenta a la escena frente a ella—. ¡Tienes que hablar más fuerte!",
+        "«Hola», dijo Juan.",
+        "«Hola, Silvia —dijo Juan—. ¿Qué tal?».",
+        "—…",
+        "—Trajo pan, leche, etc. —dijo Juan.",
+        "— agudas",
+        "— llanas, cuyo acento recae en la penúltima sílaba;",
+    ];
+    for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+
+    test("the dash of the character's words is a raya joined to them", () => {
+        expect(fix("— Hola —dijo Juan.")).toBe("—Hola —dijo Juan.");
+        expect(fix("– Hola –dijo Juan–. ¿Tú?")).toBe("—Hola —dijo Juan—. ¿Tú?");
+        expect(fix("—Bien —contestó Juan —. ¿Tú?")).toBe("—Bien —contestó Juan—. ¿Tú?");
+        expect(fix("—Bien — contestó Juan—. ¿Tú?")).toBe("—Bien —contestó Juan—. ¿Tú?");
+    });
+    test("a verb of saying takes no full stop or comma before it, and a small letter", () => {
+        expect(fix("—Hola —Dijo Juan.")).toBe("—Hola —dijo Juan.");
+        expect(fix("—Hola. —dijo Juan.")).toBe("—Hola —dijo Juan.");
+        expect(fix("—Hola. —Dijo Juan.")).toBe("—Hola —dijo Juan.");
+        expect(fix("—¿Vienes? —Preguntó Ana.")).toBe("—¿Vienes? —preguntó Ana.");
+        expect(fix("—Hola, —dijo Juan—, ¿qué tal?")).toBe("—Hola —dijo Juan—, ¿qué tal?");
+        expect(fix("—Hola —Se quejó Juan.")).toBe("—Hola —se quejó Juan.");
+        expect(fix("—No lo sé. —Respondí.")).toBe("—No lo sé —respondí.");
+        expect(fix("«Hola, —Dijo Juan—, ¿qué tal?»")).toBe("«Hola —dijo Juan—, ¿qué tal?»");
+    });
+    test("the full stop goes after the narrator's closing dash", () =>
+        expect(fix("—Bien —contestó Juan.— ¿Tú?")).toBe("—Bien —contestó Juan—. ¿Tú?"));
+});
+
+describe("asides", () => {
+    const correct = [
+        "Se llama José Luis —al menos que yo sepa—.",
+        "Venezuela —primer lugar de tierra firme avistado por Colón (1498)— tenía 300 000 habitantes.",
+        "Me dijo convencido que lo sabía —¿sería verdad?—.",
+        "¿Han venido todos —María, Antonio y Teresa—?",
+        "Los rayos gamma producen alteraciones celulares —cáncer, mutaciones genéticas, etc.—.",
+        "Esto es lo que quiere —según he entendido—: acelgas, puerros y berenjenas.",
+        "Vinieron 2-3 personas, a 25-30 km, en clases teórico-prácticas.",
+        "El cuidado pre- y posnatal; el Madrid-Barça; Rodríguez-Moñino.",
+        "Madrid - Barcelona - Valencia.",
+        "• Python – un lenguaje",
+        "Y entonces —",
+    ];
+    for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+
+    test("hyphens and en dashes become rayas", () => {
+        expect(fix("La subasta - la mayor del año - cerró ayer.")).toBe(
+            "La subasta —la mayor del año— cerró ayer.",
+        );
+        expect(fix("La subasta – la mayor del año – cerró ayer.")).toBe(
+            "La subasta —la mayor del año— cerró ayer.",
+        );
+    });
+    test("the horizontal bar counts as a raya", () =>
+        expect(fix("La subasta ― la mayor del año ― cerró.")).toBe(
+            "La subasta ―la mayor del año― cerró.",
+        ));
+    test("rayas are separated from what is outside the aside", () =>
+        expect(fix("Sabía—todos lo sabían—que vendría.")).toBe(
+            "Sabía —todos lo sabían— que vendría.",
+        ));
+    test("an aside at the end of a sentence is closed too", () => {
+        expect(fix("Se llama José Luis —al menos que yo sepa.")).toBe(
+            "Se llama José Luis —al menos que yo sepa—.",
+        );
+        expect(fix("Llegó tarde — como siempre.")).toBe("Llegó tarde —como siempre—.");
+        expect(fix("Se llama José Luis —al menos que yo sepa.—")).toBe(
+            "Se llama José Luis —al menos que yo sepa—.",
+        );
+    });
+});
+
+describe("opening question and exclamation marks", () => {
+    const correct = [
+        "¿Qué hora es?",
+        "¡Qué alegría!",
+        "Ay, ¡qué bien!",
+        "¿Que quién soy? Soy tu primo.",
+        "¿Dónde estás?; no te veo.",
+        "Me llamo Lucía. ¿Tú?",
+        "Pero… ¿no ibas a ir?",
+        "¿Podrías traerme mi ropa: la camisa, los pantalones, los zapatos, etc.?",
+        "Ha hablado de paraprosexia (?) en clase.",
+        "Dijo que existen ranas con pelo (!).",
+        "¿Quién eres?, ¿cómo te llamas?, ¿por qué has venido?",
+        "¡¡¡Bravoooo!!!",
+        "¿¡Qué me estás contando!?",
+        "¡Qué me estás contando?",
+        "Juan, ¿vienes?",
+        "Si llueve, ¿vendrás?",
+        "«What is this?», preguntó.",
+        "El factorial 5! vale 120.",
+        "Visita https://ejemplo.com/?q=1 hoy.",
+    ];
+    for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+
+    const first = (text: string) => spanishRules(text, { headings: [] })[0]?.replacements;
+    test("the opening sign is added where the question starts", () => {
+        expect(fix("Qué hora es? Llego tarde.")).toBe("¿Qué hora es? Llego tarde.");
+        expect(fix("Qué bien! Ya llegaste.")).toBe("¡Qué bien! Ya llegaste.");
+        expect(fix("¿Quién eres?, cómo te llamas?")).toBe("¿Quién eres?, ¿cómo te llamas?");
+    });
+    test("what goes before the question stays outside it", () => {
+        expect(first("Juan, vienes?")).toEqual(["Juan, ¿vienes", "¿Juan, vienes"]);
+        expect(first("Si llueve mañana, vendrás?")?.[0]).toBe("Si llueve mañana, ¿vendrás");
+        expect(first("Entonces, venís mañana?")?.[0]).toBe("Entonces, ¿venís");
+        expect(first("Oye, dónde está tu casa?")?.[0]).toBe("Oye, ¿dónde");
+        expect(first("Quieres pan, leche o huevos?")?.[0]).toBe("¿Quieres pan, leche");
+    });
+    test("question marks are not doubled", () =>
+        expect(fix("¿¿Qué estás diciendo??")).toBe("¿Qué estás diciendo?"));
+});
+
+describe("headings", () => {
+    test("take no full stop", () => {
+        expect(fix("Historia de la ciudad.", true)).toBe("Historia de la ciudad");
+        expect(ids("Historia de la ciudad.")).toEqual([]);
+    });
+    test("numbers, abbreviations and ellipses are left alone", () => {
+        for (const heading of ["Capítulo 1. El comienzo", "Notas, etc.", "1.", "Y entonces..."])
+            expect(ids(heading, true)).toEqual([]);
+    });
+});
+
+describe("abbreviations", () => {
+    test("take a space after each full stop", () => {
+        expect(fix("Viajó a EE.UU. y a EEUU.")).toBe("Viajó a EE. UU. y a EE. UU.");
+        expect(fix("Nació en el 384 a.C. en Estagira.")).toBe("Nació en el 384 a. C. en Estagira.");
+        expect(fix("Murió en el siglo V d.C.")).toBe("Murió en el siglo V d. C.");
+        expect(fix("Quedamos a las 10am y a las 6 p.m.")).toBe(
+            "Quedamos a las 10 a. m. y a las 6 p. m.",
+        );
+        expect(fix("Trabaja en Telefónica S.A. desde 2010.")).toBe(
+            "Trabaja en Telefónica S. A. desde 2010.",
+        );
+        expect(fix("Lo firmó J.L. González.")).toBe("Lo firmó J. L. González.");
+        expect(fix("Lo aclara la N.del T. al pie.")).toBe("Lo aclara la N. del T. al pie.");
+        expect(fix("Habló con RRHH.")).toBe("Habló con RR. HH.");
+    });
+    test("correct abbreviations and look-alikes are left alone", () =>
+        expect(
+            ids(
+                "En EE. UU., en el 384 a. C., a las 10 a. m., con J. L. González y RR. HH. Llegaron 10 amigos a mediodía.",
+            ),
+        ).toEqual([]));
+});
+
+describe("phrases", () => {
+    const cases: [string, string][] = [
+        ["Había 106 inmigrantes abordo del barco.", "Había 106 inmigrantes a bordo del barco."],
+        ["Es el segundo de abordo.", "Es el segundo de a bordo."],
+        ["Lo hizo en aras a la paz.", "Lo hizo en aras de la paz."],
+        ["Vive en frente de la iglesia.", "Vive enfrente de la iglesia."],
+        [
+            "Cuando volví en sí, estaba en el hospital.",
+            "Cuando volví en mí, estaba en el hospital.",
+        ],
+        ["Ya no doy más de sí.", "Ya no doy más de mí."],
+        [
+            "Cierra la puerta, no siendo que entre el gato.",
+            "Cierra la puerta, no sea que entre el gato.",
+        ],
+        ["Celebró el onceavo aniversario.", "Celebró el undécimo aniversario."],
+        ["Es la doceava edición.", "Es la duodécima edición."],
+        ["Vive en el treceavo piso.", "Vive en el decimotercer piso."],
+        ["Llegó en el puesto quinceavo.", "Llegó en el puesto decimoquinto."],
+        ["Los y las representantes votaron.", "Los representantes votaron."],
+        ["Este regalo es para tú.", "Este regalo es para ti."],
+        ["Vendrá con yo y con él.", "Vendrá conmigo y con él."],
+        ["Nadie no vino a la fiesta.", "Nadie vino a la fiesta."],
+        ["Se buscan a los culpables del robo.", "Se busca a los culpables del robo."],
+        ["Se contrataron a varios expertos.", "Se contrató a varios expertos."],
+        ["Si tendría dinero, viajaría.", "Si tuviera dinero, viajaría."],
+        ["Si lo habría sabido, te lo habría dicho.", "Si lo hubiera sabido, te lo habría dicho."],
+        ["Si estudiaríamos más, aprobaríamos.", "Si estudiáramos más, aprobaríamos."],
+        ["Si comería menos, adelgazaría.", "Si comiera menos, adelgazaría."],
+        ["La dije que viniera pronto.", "Le dije que viniera pronto."],
+        ["Los pregunté que si querían ir.", "Les pregunté que si querían ir."],
+        ["La di un beso a Manuela.", "Le di un beso a Manuela."],
+        ["Es importante de que lo sepas.", "Es importante que lo sepas."],
+        ["Me olvidé que era lunes.", "Me olvidé de que era lunes."],
+        ["¿Te acuerdas que fuimos al cine?", "¿Te acuerdas de que fuimos al cine?"],
+        ["No cabe duda que lloverá.", "No cabe duda de que lloverá."],
+        [
+            "Te lo presto con la condición que lo cuides.",
+            "Te lo presto con la condición de que lo cuides.",
+        ],
+        ["Tengo la sensación que va a llover.", "Tengo la sensación de que va a llover."],
+        ["¡Sentaros todos, por favor!", "¡Sentaos todos, por favor!"],
+        ["¡Callaros ya!", "¡Callaos ya!"],
+        ["¡Veniros conmigo!", "¡Veníos conmigo!"],
+        ["Váyasen de aquí.", "Váyanse de aquí."],
+        [
+            "Por último, agradecer a todos su asistencia.",
+            "Por último, quiero agradecer a todos su asistencia.",
+        ],
+    ];
+    for (const [wrong, right] of cases) test(wrong, () => expect(fix(wrong)).toBe(right));
+
+    test("coordinated articles offer the generic masculine and the split", () =>
+        expect(
+            spanishRules("Los y las alumnas votaron.", { headings: [] })[0].replacements,
+        ).toEqual(["Los alumnos", "Los alumnos y las alumnas"]));
+    test("a conditional without a sure subjunctive is reported without a fix", () => {
+        const [m] = spanishRules("Si pediría ayuda, vendrían.", { headings: [] });
+        expect(m.ruleId).toBe("RAE_SI_CONDICIONAL");
+        expect(m.replacements).toEqual([]);
+    });
+
+    const correct = [
+        "El abordo de los piratas fue rápido.",
+        "Cuando volvió en sí, estaba en el hospital.",
+        "Le tocó la onceava parte de la herencia.",
+        "Entre tú y yo no hay secretos. Hablamos de tú a tú. Lo hizo sin yo saberlo.",
+        "Si no viene nadie no pasa nada.",
+        "Se dedican a los niños. Se trasladaron a Madrid.",
+        "Si quería venir, podía. Si la librería abre, iré. No sé si vendría. ¿Si sería verdad?",
+        "Si prefería quedarse, se quedaba.",
+        "Te lo dije que no vinieras. La canción la canté yo.",
+        "Ya es hora de que te vayas. Estoy seguro de que vendrá.",
+        "Se acordó que la reunión sería el lunes. Olvidé que era lunes.",
+        "¡Iros a casa! Quiero veros pronto.",
+        "Si hablasen más, se entenderían.",
+        "Por último, el informe fue aprobado.",
+    ];
+    for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+});
+
+describe("false positives found in the vault", () => {
+    const correct = [
+        "Las respuestas también las da el maestro.",
+        "¿Podemos tratarlo de tú, maestro?",
+        "• Randi, James (1980). Flim-Flam! (en inglés). Prometheus Books.",
+        "Se publicó como Fake! (1969). Irving y de Hory aparecen en el documental.",
+        "En el juego de cartas Yu-Gi-Oh!, de Konami.",
+        "«¡Las Malvinas son... italianas!»",
+        "« La musique africaine : un savoir qui s’ignore ? ». In A. Sureau éd.",
+        "Koch, Christof (2014). Is Consciousness Universal? Scientific American.",
+        "Pellwel, Calvin E (2022). «What Is Dowsing? - The Ancient Practice».",
+        "Sus obras: Cheburashka (1969-1983), Nu, pogodí! (Ну, погоди!), Erizo en la niebla.",
+        "Comprende una traducción del Quid fles? de Horacio y las del O navis! por Almeida.",
+        "Johnson, Victoria Stapells, ([1992?]). Los corsarios. Santo Dominuo [!] Imprenta.",
+        "¿Qué cosa hay que se tenga\npor verdad lo que no es?",
+        "Correcta: —¡No puedo oírte! —gritó Kismine, atenta a la escena.",
+        "Respuestas con el verbo hacer (—¿Qué haces? —Comer), entre otras.",
+        "• PatrimonioNacional.es — Relación de la batalla de 1571.",
+        "«Adolfo Mejía - Viajero de mí mismo [Documental] - YouTube». www.youtube.com.",
+        "Educação – Antropologia e Educação – Ideias, Ideais e História.",
+        "Ereso, isla de Lesbos, ca. 371 a. C. – ca. 287 a. C.) fue un filósofo.",
+        "En el español europeo las formas en -ra y -se suelen ser intercambiables.",
+        "En algunos casos se adopta la terminación -isa o -esa: papa/papisa.",
+        "Uso de la h- únicamente cuando procede de F- inicial latina.",
+        "Recitado por Adolfo Marsillach — palabravirtual.com.",
+        "Es vivo — no está muerto; es el primero — su existencia no se debe a ninguna causa.",
+        "-En los descubrimientos: Se harían con licencia. Ni por tierra. -En las colonizaciones: Se prohibirían.",
+        "-Ver parte que relata el descubrimiento de Puerto Rico-",
+        "LUD.— ¿Esos son todos los que hay ahora?",
+        "(Tr.) Nijinsky describe su actuación. Ver la nota (Ed.) y «los yanquis» (Universal [Ven.] 6.4.1999).",
+    ];
+    for (const text of correct) test(JSON.stringify(text), () => expect(ids(text)).toEqual([]));
+
+    test("hyphens glued to the aside are rayas too", () => {
+        expect(fix("Pero a ello se añadió -como vimos- el haberse atrevido.")).toBe(
+            "Pero a ello se añadió —como vimos— el haberse atrevido.",
+        );
+        expect(
+            fix("Su desaparición –además de por sus luchas dinásticas- se ensarta en el contexto."),
+        ).toBe("Su desaparición —además de por sus luchas dinásticas— se ensarta en el contexto.");
+    });
+    test("dialogue quoted at the start of a line", () =>
+        expect(fix("«— Los micmac creían que era mágico —dijo—. Creían en el bosque.")).toBe(
+            "«—Los micmac creían que era mágico —dijo—. Creían en el bosque.",
+        ));
+    test("a dash joined to a question takes a space before it", () =>
+        expect(fix("—Hola Ana, ¿cómo estás?—dijo Manuel.")).toBe(
+            "—Hola Ana, ¿cómo estás? —dijo Manuel.",
+        ));
+});
+
 describe("ranges", () => {
     test("use a hyphen", () =>
         expect(fix("Vivió en Bogotá (1998–2012).")).toBe("Vivió en Bogotá (1998-2012)."));

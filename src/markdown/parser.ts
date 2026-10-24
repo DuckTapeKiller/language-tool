@@ -97,6 +97,20 @@ export function formattingOf(text: string): string {
     return JSON.stringify([types, markers]);
 }
 
+/** The ranges of italics in markdown, with their markers, and the marker of each */
+export function emphasisRanges(text: string): { from: number; to: number; marker: string }[] {
+    const ranges: { from: number; to: number; marker: string }[] = [];
+    const walk = (node: RootContent | Root) => {
+        const start = node.position?.start.offset;
+        const end = node.position?.end.offset;
+        if (node.type === "emphasis" && start != null && end != null)
+            ranges.push({ from: start, to: end, marker: text[start] });
+        if ("children" in node) for (const child of node.children) walk(child);
+    };
+    walk(parseMarkdown(mask(text, obsidianSyntax(text))));
+    return ranges;
+}
+
 export class SyntaxTree {
     #raw: string;
     #tree: Root;

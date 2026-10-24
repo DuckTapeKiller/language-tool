@@ -14,7 +14,7 @@ Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/ob
 - **Click an underline to see its suggestions.** Hovering opens them too, without the misses after scrolling that CodeMirror's hover tooltips had. Escape closes them.
 - **Automatic checking checks a note when you open it**, not only the paragraphs you edit.
 - **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact, and a space forgotten next to a marker goes on its outer side: «y\*\*aseguró\*\*» becomes «y \*\*aseguró\*\*». Before a suggestion next to markup is offered, it is tried on its paragraph and the markdown is read again; if any formatting would change, the suggestion is shown but cannot be applied.
-- **Spanish typography (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as the full stop after closing quotation marks, em dashes, thousands, dates and «angular» quotation marks.
+- **Spanish typography and grammar (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as dialogue punctuation, rayas in asides, the opening «¿» and «¡», abbreviations, Latin phrases in italics, thousands, dates, «angular» quotation marks, and constructions such as «Si tendría», «La dije que» or «en aras a».
 - **British spelling.** "-ise" and "-ize" are both accepted in British English, unless you ask for Oxford spelling.
 - **Spanish varieties.** Spanish can be checked as generic Spanish, Spanish from Spain, or Spanish with voseo («vos tenés»), which generic Spanish marks as an error.
 - **Obsidian syntax is not checked:** comments, tags, callout markers, block IDs, embeds and highlight markers. Inline code and maths read as a neutral word, so they no longer cause spacing warnings.
@@ -70,14 +70,19 @@ It sends one request per paragraph, which the public and Premium servers would r
 
 ### Spanish typography (RAE)
 
-LanguageTool checks Spanish spelling and grammar well, but misses much of the orthotypography of the RAE's *Libro de estilo de la lengua española*. Under Settings → Language Tool → Spanish typography (RAE), the plugin adds these checks to every paragraph LanguageTool detects as Spanish:
+LanguageTool checks Spanish spelling and grammar well, but misses much of the orthotypography of the RAE's *Libro de estilo de la lengua española*, and some of the constructions that the *Diccionario panhispánico de dudas* corrects. Under Settings → Language Tool → Spanish typography (RAE), the plugin adds these checks to every paragraph LanguageTool detects as Spanish:
 
 | Rule | Wrong | Right |
 |---|---|---|
 | Full stop after closing signs | «No te vayas.» | «No te vayas». |
 | No full stop after ? or ! | ¿Vienes?. | ¿Vienes? |
+| Opening ¿ and ¡ | Qué hora es? · Juan, vienes? | ¿Qué hora es? · Juan, ¿vienes? |
+| Question marks not doubled | ¿¿Qué?? | ¿Qué? |
 | Colon after a letter greeting | Estimados vecinos, | Estimados vecinos: |
-| Em dashes joined to the aside | la subasta — la mayor del año — cerró | la subasta —la mayor del año— cerró |
+| Dialogue with rayas joined to the words | — Hola —dijo Juan. · – Hola –dijo Juan–. ¿Tú? | —Hola —dijo Juan. · —Hola —dijo Juan—. ¿Tú? |
+| No full stop or comma before a verb of saying, which is in lower case | —Hola. —Dijo Juan. · —Hola, —dijo Juan—, ¿qué tal? | —Hola —dijo Juan. · —Hola —dijo Juan—, ¿qué tal? |
+| Asides between rayas, joined to them | la subasta — la mayor del año — cerró · la subasta - la mayor del año - cerró | la subasta —la mayor del año— cerró |
+| Closing raya at the end of a sentence | Se llama José Luis —al menos que yo sepa. | Se llama José Luis —al menos que yo sepa—. |
 | Hyphen in ranges | 1998–2012 | 1998-2012 |
 | Thousands with a space, none in four digits | 20.000 · 1.250.000 · 1,250,000 · 1.250 | 20 000 · 1 250 000 · 1250 |
 | Space before % | 40% | 40 % |
@@ -85,10 +90,16 @@ LanguageTool checks Spanish spelling and grammar well, but misses much of the or
 | Months and days in lower case | el Lunes 3 de Enero | el lunes 3 de enero |
 | Positions in lower case | el Rey Felipe, el Papa Francisco | el rey Felipe, el papa Francisco |
 | Headings in sentence case | Historia Y Desarrollo De La Ciudad | Historia y desarrollo de la ciudad |
+| No full stop after a heading | ## La historia de la ciudad. | ## La historia de la ciudad |
+| A space after each full stop of an abbreviation | EE.UU. · EEUU · 384 a.C. · 10am · S.A. · J.L. González | EE. UU. · 384 a. C. · 10 a. m. · S. A. · J. L. González |
 | «Angular» quotation marks first | “cita” · "cita" | «cita» |
 | Quotation marks or italics, not both | “*At Day's Close*” | *At Day's Close* (a complete work) · «At Day's Close» (a quotation or part of a work) |
+| Latin and foreign expressions in italics, Latin without accents | in situ · status quo · de motu propio · sui géneris · deja vu | *in situ* · *statu quo* · *motu proprio* · *sui generis* · *déjà vu* |
+| Phrases | abordo del barco · en aras a · volví en sí · el onceavo aniversario · no siendo que · en frente de | a bordo del barco · en aras de · volví en mí · el undécimo aniversario · no sea que · enfrente de |
+| Grammar | Si tendría dinero · La dije que viniera · Nadie no vino · Se buscan a los culpables · Es importante de que · Me olvidé que · No cabe duda que · ¡Sentaros! · Váyasen · para tú | Si tuviera dinero · Le dije que viniera · Nadie vino · Se busca a los culpables · Es importante que · Me olvidé de que · No cabe duda de que · ¡Sentaos! · Váyanse · para ti |
+| Style | Por último, agradecer a todos… · los y las alumnas | Por último, quiero agradecer a todos… · los alumnos, or los alumnos y las alumnas |
 
-The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)") and dialogue ("—Bien —contestó Juan—"). Any of them can be turned off with "Disable rule". As their fixes are mechanical, the suggestion box also offers "Fix all … in this note", which applies the same fix everywhere the rule found it, for example every quotation to «», in one step that a single undo reverts. For headings, every word after the first is lowered except proper names: words LanguageTool's dictionary only knows with a capital («Cartagena»), words the note writes with a capital in the middle of a sentence («la vida de Pedro de Heredia»), and acronyms («ONU»). For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation.
+The rules leave alone what the norm accepts, as well as proper names ("Julio César", "Plaza de Mayo", "Movimiento 2 de Junio"), abbreviations ("etc.)", "[Ven.]"), dialogue ("—Bien —contestó Juan—") and lists ("— agudas"). Quotations in other languages, titles that end in «?» or «!» («se publicó como Fake! (1969)») and citations between quotation marks are not changed. Where LanguageTool already reports the same mistake with the same fix, only its underline is shown; where a rule rewrites a whole Latin phrase, LanguageTool's spelling suggestions inside it («motu» → «mote», «vítae» → «vital») are dropped. Any rule can be turned off with "Disable rule". As their fixes are mechanical, the suggestion box also offers "Fix all … in this note", which applies the same fix everywhere the rule found it, for example every quotation to «», in one step that a single undo reverts. For headings, every word after the first is lowered except proper names: words LanguageTool's dictionary only knows with a capital («Cartagena»), words the note writes with a capital in the middle of a sentence («la vida de Pedro de Heredia»), and acronyms («ONU»). For quotation marks around italics, both fixes are offered, as the plugin cannot tell a title from a quotation. Latin phrases are put in italics with the marker the note already uses, `*` or `_`. Where a conditional after «si» has no surely known subjunctive («Si pediría»), the mistake is shown without a fix.
 
 ### Language varieties
 

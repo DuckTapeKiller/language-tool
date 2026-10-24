@@ -2,8 +2,9 @@ import { endpointFromUrl, getEndpoint, LTOptions } from "./settings";
 import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
 import { AnnotatedText, TextEdit } from "./annotated";
-import { formattingOf } from "./markdown/parser";
+import { emphasisRanges, formattingOf } from "./markdown/parser";
 import { errorMessage } from "./helpers";
+import { foreignPhrases } from "./rules/latin";
 import { sentenceCase, spanishRules } from "./rules/spanish";
 
 /** LanguageTool Check API: https://languagetool.org/http-api/swagger-ui */
@@ -199,6 +200,10 @@ export async function check(
 
 /// Characters of markdown and Obsidian syntax near which a change may alter the formatting
 const MARKUP_NEARBY = /[*_[\]()`<>=~^\\|$!#%]/;
+/// Rules whose suggestions change the formatting on purpose, adding or removing italics
+const FORMATTING_RULES = new Set(["RAE_COMILLAS_Y_CURSIVA", "RAE_LATINISMO_CURSIVA"]);
+/// Rules whose fix rewrites the whole phrase, so LanguageTool's matches inside it go
+const SUPERSEDING = new Set(["RAE_LATINISMO_CURSIVA", "RAE_LATINISMO_FORMA", "RAE_IMPERATIVO_SE"]);
 
 /**
  * Suggestions next to markup are tried on their paragraph first: if the markdown would
@@ -207,7 +212,7 @@ const MARKUP_NEARBY = /[*_[\]()`<>=~^\\|$!#%]/;
  */
 function withheldIfFormattingChanges(source: string, lints: LTLint[]): LTLint[] {
     return lints.map(lint => {
-        if (lint.ruleId === "RAE_COMILLAS_Y_CURSIVA" || !lint.edits) return lint;
+        if (FORMATTING_RULES.has(lint.ruleId) || !lint.edits) return lint;
         const { from, to } = lint.range;
         if (!MARKUP_NEARBY.test(source.slice(Math.max(0, from - 2), to + 2))) return lint;
         // The paragraph around the match
@@ -368,6 +373,61 @@ export function italicQuotations(
 }
 
 /**
+ * Latin phrases and foreign expressions that are not in italics, or are written wrongly:
+ * «in situ» → «*in situ*», «*status quo*» → «*statu quo*». Between quotation marks, a
+ * quotation in another language needs no italics. `offset` and `isText` are as for
+ * {@link italicQuotations}.
+ */
+export function foreignExpressions(
+    source: string,
+    offset: number,
+    isText: (raw: number) => boolean,
+): LocalMatch[] {
+    const found: LocalMatch[] = [];
+    let marker: string | undefined;
+    for (const phrase of foreignPhrases(source)) {
+        const from = phrase.from - offset;
+        const to = phrase.to - offset;
+        let text = true;
+        for (let r = from; r < to && text; r++) text = isText(r);
+        if (!text) continue;
+        if (/[«“"‘]/.test(source[phrase.from - 1] ?? "") && /[»”"’]/.test(source[phrase.to] ?? ""))
+            continue;
+        // In a wikilink, a marker would change the link
+        const before = source.slice(0, phrase.from);
+        if (before.lastIndexOf("[[") > before.lastIndexOf("]]")) continue;
+        const start = Math.max(0, source.lastIndexOf("\n\n", phrase.from));
+        const endAt = source.indexOf("\n\n", phrase.to);
+        const paragraph = source.slice(start, endAt < 0 ? source.length : endAt);
+        const italic = emphasisRanges(paragraph).some(
+            e => start + e.from < phrase.from && phrase.to < start + e.to,
+        );
+        if (italic && phrase.written === phrase.right) continue;
+        // The note's own marker for italics
+        if (marker === undefined) {
+            const all = emphasisRanges(source);
+            marker = all.filter(e => e.marker === "_").length * 2 > all.length ? "_" : "*";
+        }
+        const replacement = italic ? phrase.right : marker + phrase.right + marker;
+        found.push({
+            from,
+            to,
+            ruleId: italic ? "RAE_LATINISMO_FORMA" : "RAE_LATINISMO_CURSIVA",
+            categoryId: italic ? "GRAMMAR" : "TYPOGRAPHY",
+            title: italic ? "Forma de la locución" : "Locución latina o extranjera",
+            message:
+                (italic
+                    ? ""
+                    : "Las locuciones latinas y las expresiones de otras lenguas sin adaptar se escriben en cursiva, o entre comillas, y las latinas sin tildes, como in situ, grosso modo o curriculum vitae. ") +
+                (phrase.written === phrase.right ? "" : `La forma es «${phrase.right}».`),
+            replacements: [replacement],
+            edits: [[{ from: 0, to: to - from, insert: replacement }]],
+        });
+    }
+    return found;
+}
+
+/**
  * Add the matches of the RAE rules that LanguageTool lacks, for text detected as Spanish.
  * `source` is the note, which tells where the headings and the italics are.
  */
@@ -392,7 +452,13 @@ function withSpanishLints(
         }
     }
 
-    const local: LocalMatch[] = source ? italicQuotations(source, offset, r => plainAt.has(r)) : [];
+    const isText = (r: number) => plainAt.has(r);
+    const local: LocalMatch[] = source
+        ? [
+              ...italicQuotations(source, offset, isText),
+              ...foreignExpressions(source, offset, isText),
+          ]
+        : [];
     for (const m of spanishRules(text, { headings })) {
         // The match must start and end on text of the note, not on markup
         const from = raw[m.from];
@@ -425,7 +491,14 @@ function withSpanishLints(
         // Spelling and grammar inside, e.g. inside a quotation, are always kept.
         const overlapping = found.filter(l => l.range.from < range.to && l.range.to > range.from);
         if (overlapping.some(l => l.range.from < range.from || l.range.to > range.to)) continue;
-        for (const l of overlapping) if (REPLACEABLE.has(l.categoryId)) replaced.add(l);
+        // LanguageTool already reports it, with the same fix
+        const same = (l: LTLint) =>
+            l.range.from === range.from &&
+            l.range.to === range.to &&
+            l.replacements[0] === m.replacements[0];
+        if (overlapping.some(same)) continue;
+        for (const l of overlapping)
+            if (REPLACEABLE.has(l.categoryId) || SUPERSEDING.has(m.ruleId)) replaced.add(l);
         result.push({
             range,
             text: annotated.extractSlice(m.from, m.to) ?? "",

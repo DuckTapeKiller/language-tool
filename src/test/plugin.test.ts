@@ -3,6 +3,7 @@ import { AnnotatedText } from "../annotated";
 import {
     baseLanguageCodes,
     checkParams,
+    foreignExpressions,
     italicQuotations,
     planRequests,
     resolveLanguage,
@@ -461,6 +462,55 @@ describe("italics inside quotation marks", () => {
         expect(fixes("Puso “*a* y *b*” en la lista.")).toEqual([]);
         expect(fixes("Escribió “\\*literal\\*” así.")).toEqual([]);
         expect(fixes('Mezcló “*comillas*" distintas.')).toEqual([]);
+    });
+});
+
+describe("Latin and foreign expressions", () => {
+    // The note with the first fix of every match applied
+    function fix(source: string): string {
+        const { offset, annotations } = new SyntaxTree(source).annotate(undefined);
+        const start = offset + annotations.optimize();
+        const text = new Set(annotations.plainText().raw.filter(r => r != null));
+        let result = source;
+        for (const m of foreignExpressions(source, start, r => text.has(r)).reverse()) {
+            const at = start + m.from;
+            for (const e of [...m.edits[0]!].sort((a, b) => b.from - a.from))
+                result = result.slice(0, at + e.from) + e.insert + result.slice(at + e.to);
+        }
+        return result;
+    }
+
+    test("go in italics, Latin without accents", () => {
+        expect(fix("Se analizó in situ.")).toBe("Se analizó *in situ*.");
+        expect(fix("Tiene un estilo sui géneris.")).toBe("Tiene un estilo *sui generis*.");
+        expect(fix("Envió su currículum vítae.")).toBe("Envió su *curriculum vitae*.");
+        expect(fix("A priori, parece fácil.")).toBe("*A priori*, parece fácil.");
+        expect(fix("Tuvo un deja vu.")).toBe("Tuvo un *déjà vu*.");
+        expect(fix("Escribió «haiga» (sic) en la carta.")).toBe(
+            "Escribió «haiga» (*sic*) en la carta.",
+        );
+    });
+    test("wrong forms are put right", () => {
+        expect(fix("Defienden el status quo.")).toBe("Defienden el *statu quo*.");
+        expect(fix("Lo hizo de motu propio.")).toBe("Lo hizo *motu proprio*.");
+        expect(fix("Lo explicó a grosso modo.")).toBe("Lo explicó *grosso modo*.");
+        expect(fix("Defienden el *status quo*.")).toBe("Defienden el *statu quo*.");
+        expect(fix("Alea jacta est, dijo.")).toBe("*Alea jacta est*, dijo.");
+    });
+    test("the note's own marker for italics is used", () =>
+        expect(fix("Leyó _Leyendas_ y lo analizó in situ.")).toBe(
+            "Leyó _Leyendas_ y lo analizó _in situ_.",
+        ));
+    test("italics, quotations, links and code are left alone", () => {
+        for (const source of [
+            "Se analizó *in situ*.",
+            "Fue _de facto_ el jefe; ***ad hoc*** también.",
+            "Dijo «in situ» en latín.",
+            "Ver [[in situ]] y [[Nota|ad hoc]].",
+            "El código `in situ` y $per se$.",
+            "La palabra sic sola no.",
+        ])
+            expect(fix(source)).toBe(source);
     });
 });
 

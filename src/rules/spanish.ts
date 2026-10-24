@@ -4,25 +4,22 @@
  * Each rule reports a range of the checked text and its replacements.
  */
 
-export interface RuleMatch {
-    ruleId: string;
-    categoryId: string;
-    from: number;
-    to: number;
-    title: string;
-    message: string;
-    replacements: string[];
-}
+import {
+    ABBREVIATIONS,
+    Context,
+    isUpper,
+    Rule,
+    RuleMatch,
+    sentenceStart,
+    THIN_SPACE,
+    upperFirst,
+} from "./common";
+import { abbreviationRule } from "./abbreviations";
+import { dashRules } from "./dialogue";
+import { phraseRules } from "./phrases";
+import { headingStop, questionRules } from "./punctuation";
 
-interface Context {
-    /// Ranges of the text that are headings
-    headings: readonly { from: number; to: number }[];
-}
-
-type Rule = (text: string, context: Context) => RuleMatch[];
-
-/// Narrow no-break space, as LanguageTool also suggests between a number and its unit
-const THIN_SPACE = "\u202f";
+export type { RuleMatch } from "./common";
 
 const MONTHS = [
     "enero",
@@ -69,9 +66,6 @@ const TITLES = [
     "gobernadora",
     "virrey",
 ];
-/// Abbreviations whose full stop may precede a closing quotation mark or bracket
-const ABBREVIATIONS =
-    /(?:^|[\s(«“"‘])(?:etc|p\. ej|Sr|Sra|Srta|Dr|Dra|D|Dña|Ud|Uds|pág|págs|cap|vol|n|núm|art|ed|eds|trad|coord|cf|vid|ss|a\. C|d\. C|EE\. UU|[A-ZÁÉÍÓÚÑ])$/u;
 const FUNCTION_WORDS = new Set([
     "de",
     "del",
@@ -96,15 +90,6 @@ const FUNCTION_WORDS = new Set([
     "al",
 ]);
 
-const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const isUpper = (ch: string) => ch !== ch.toLowerCase() && ch === ch.toUpperCase();
-
-/** Whether the position starts a sentence: after nothing, a line break or a sentence end */
-function sentenceStart(text: string, pos: number): boolean {
-    const before = text.slice(0, pos).replace(/[\s«“"‘(¿¡—-]+$/u, "");
-    return !before || /[.!?:\n…]$/.test(before) || /\n\s*$/.test(text.slice(0, pos));
-}
-
 /**
  * The previous word before a position, skipping articles and prepositions.
  * Empty if that word starts the sentence, as its capital then says nothing.
@@ -125,9 +110,24 @@ const rules: Rule[] = [
     // «No te vayas.» → «No te vayas».   (Supongo que sí.) → (Supongo que sí).
     text => {
         const found: RuleMatch[] = [];
-        for (const m of text.matchAll(/([^\s.])\.([»”’"')\]])(?=\s|$)/gu)) {
+        for (const m of text.matchAll(/([^\s.])\.([»”’"')\]—―])(?=\s|$)/gu)) {
             const dot = m.index + m[1].length;
             if (ABBREVIATIONS.test(text.slice(0, dot))) continue;
+            // What is short between the signs is an abbreviation: «(Ed.)», «[R. Dom.]», «"Theophr."»
+            const opening = {
+                "»": "«",
+                "”": "“",
+                "’": "‘",
+                '"': '"',
+                "'": "'",
+                ")": "(",
+                "]": "[",
+            }[m[2]];
+            const start = opening ? text.lastIndexOf(opening, dot) : -1;
+            if (start >= 0 && dot - start <= 10) continue;
+            // The character's name in a play: «MARÍA.— ¿Dónde vas?»
+            const lineStart = text.lastIndexOf("\n", dot) + 1;
+            if (!opening && /^\s*[\p{L} ]+$/u.test(text.slice(lineStart, dot))) continue;
             found.push({
                 ruleId: "RAE_PUNTO_TRAS_CIERRE",
                 categoryId: "PUNCTUATION",
@@ -173,29 +173,17 @@ const rules: Rule[] = [
             },
         ];
     },
-    // La subasta — la mayor del año — cerró → La subasta —la mayor del año— cerró
-    text => {
-        const found: RuleMatch[] = [];
-        // In dialogue, «—Bien —contestó Juan—» correctly has a space before the narrator's dash
-        if (text.trimStart().startsWith("—")) return [];
-        for (const m of text.matchAll(
-            /(^|\s)—([ \t]+)([^—\n]*?[^\s—])([ \t]*)—(?=[\s.,;:)»”]|$)/gu,
-        )) {
-            const from = m.index + m[1].length;
-            const to = m.index + m[0].length;
-            found.push({
-                ruleId: "RAE_RAYA_PEGADA",
-                categoryId: "TYPOGRAPHY",
-                from,
-                to,
-                title: "Espacios dentro de las rayas",
-                message:
-                    "La raya de inciso va pegada a la primera y a la última palabra del inciso, y separada por un espacio de lo que queda fuera.",
-                replacements: [`—${m[3]}—`],
-            });
-        }
-        return found;
-    },
+    // La subasta — la mayor del año — cerró → La subasta —la mayor del año— cerró;
+    // — Hola —Dijo Juan. → —Hola —dijo Juan.
+    dashRules,
+    // Qué hora es? → ¿Qué hora es?
+    questionRules,
+    // ## La ciudad. → ## La ciudad
+    headingStop,
+    // EE.UU., 384 a.C., 10am → EE. UU., 384 a. C., 10 a. m.
+    abbreviationRule,
+    // abordo de, en aras a, volví en sí, Nadie no vino, Si tendría…
+    phraseRules,
     // 1998–2012 → 1998-2012
     text =>
         [...text.matchAll(/(\d+)[ \t]?–[ \t]?(\d+)/g)].map(m => ({
