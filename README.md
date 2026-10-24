@@ -13,7 +13,7 @@ Language Tool is a fork of [obsidian-languagetool](https://github.com/wrenger/ob
 - **Text in other languages** can be left unchecked, so a quotation in French gets no French suggestions.
 - **Click an underline to see its suggestions.** Hovering opens them too, without the misses after scrolling that CodeMirror's hover tooltips had. Escape closes them.
 - **Automatic checking checks a note when you open it**, not only the paragraphs you edit.
-- **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact. A suggestion that would remove markup is shown but cannot be applied.
+- **Suggestions keep the formatting.** A suggestion changes only the characters that differ, so emphasis markers, links, footnotes and comments next to a mistake stay intact, and a space forgotten next to a marker goes on its outer side: «y\*\*aseguró\*\*» becomes «y \*\*aseguró\*\*». Before a suggestion next to markup is offered, it is tried on its paragraph and the markdown is read again; if any formatting would change, the suggestion is shown but cannot be applied.
 - **Spanish typography (RAE).** Spanish text is also checked against rules of the RAE's *Libro de estilo* that LanguageTool lacks, such as the full stop after closing quotation marks, em dashes, thousands, dates and «angular» quotation marks.
 - **British spelling.** "-ise" and "-ize" are both accepted in British English, unless you ask for Oxford spelling.
 - **Spanish varieties.** Spanish can be checked as generic Spanish, Spanish from Spain, or Spanish with voseo («vos tenés»), which generic Spanish marks as an error.

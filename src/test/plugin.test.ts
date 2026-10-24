@@ -8,7 +8,12 @@ import {
     resolveLanguage,
 } from "../api";
 import { cmpIgnoreCase, isSpelling, nonOverlapping, suggestionChange } from "../helpers";
-import { obsidianSyntax, SyntaxTree } from "../markdown/parser";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfm } from "micromark-extension-gfm";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { wikiLink } from "../markdown/micromark-wikilink";
+import { wikiLinkFromMarkdown } from "../markdown/mdast-wikilink";
+import { formattingOf, obsidianSyntax, SyntaxTree } from "../markdown/parser";
 import { applyNoteSettings } from "../noteSettings";
 import { DEFAULT_SETTINGS, LTOptions } from "../settings";
 
@@ -456,5 +461,121 @@ describe("italics inside quotation marks", () => {
         expect(fixes("Puso “*a* y *b*” en la lista.")).toEqual([]);
         expect(fixes("Escribió “\\*literal\\*” así.")).toEqual([]);
         expect(fixes('Mezcló “*comillas*" distintas.')).toEqual([]);
+    });
+});
+
+describe("spaces next to formatting markers", () => {
+    // The formatting of a note: its elements in order, and Obsidian's own markers
+    function structure(source: string): string {
+        const tree = fromMarkdown(source, {
+            extensions: [gfm(), wikiLink({ aliasDivider: "|" })],
+            mdastExtensions: [gfmFromMarkdown(), wikiLinkFromMarkdown()],
+        });
+        const types: string[] = [];
+        const walk = (node: { type: string; children?: unknown[] }) => {
+            if (!["root", "paragraph", "text"].includes(node.type)) types.push(node.type);
+            for (const child of node.children ?? []) walk(child as typeof node);
+        };
+        walk(tree);
+        const obsidian = obsidianSyntax(source).map(r => source.slice(r.from, r.to).trim());
+        return JSON.stringify([types, obsidian]);
+    }
+
+    // Apply a suggestion for `word` to the note, as the editor does
+    function apply(source: string, word: string, replacement: string): string | null {
+        const { offset, annotations } = new SyntaxTree(source).annotate(undefined);
+        const start = offset + annotations.optimize();
+        const from = source.indexOf(word);
+        const edits = annotations.safeEdits(from - start, from + word.length - start, replacement);
+        if (!edits) return null;
+        let result = source;
+        for (const e of [...edits].sort((a, b) => b.from - a.from))
+            result = result.slice(0, from + e.from) + e.insert + result.slice(from + e.to);
+        return result;
+    }
+
+    const cases: [string, string, string, string][] = [
+        // [note, underlined text, suggestion, expected note]
+        [
+            "Anunció el fin de todos los experimentos y**aseguró que la organización** **estaba haciendo arreglos**.",
+            "y**aseguró",
+            "y aseguró",
+            "Anunció el fin de todos los experimentos y **aseguró que la organización** **estaba haciendo arreglos**.",
+        ],
+        [
+            "Fue el **fin**y empezó otra cosa.",
+            "fin**y",
+            "fin y",
+            "Fue el **fin** y empezó otra cosa.",
+        ],
+        ["Leyó la *novela*y la dejó.", "novela*y", "novela y", "Leyó la *novela* y la dejó."],
+        ["Era el ~~viejo~~y nuevo plan.", "viejo~~y", "viejo y", "Era el ~~viejo~~ y nuevo plan."],
+        [
+            "Lo dijo y[el texto](https://example.org) siguió.",
+            "y[el",
+            "y el",
+            "Lo dijo y [el texto](https://example.org) siguió.",
+        ],
+        [
+            "Ver [el texto](https://example.org)y más.",
+            "texto](https://example.org)y",
+            "texto y",
+            "Ver [el texto](https://example.org) y más.",
+        ],
+        [
+            "Habló de y[[Cartagena]] ayer.",
+            "y[[Cartagena",
+            "y Cartagena",
+            "Habló de y [[Cartagena]] ayer.",
+        ],
+        [
+            "Una frase.[^1]Pues sigue.\n\n[^1]: Nota.",
+            ".[^1]Pues",
+            ". Pues",
+            "Una frase.[^1] Pues sigue.\n\n[^1]: Nota.",
+        ],
+        ["Es y==muy importante== saberlo.", "y==muy", "y muy", "Es y ==muy importante== saberlo."],
+        [
+            "Es ==muy importante==y saberlo.",
+            "importante==y",
+            "importante y",
+            "Es ==muy importante== y saberlo.",
+        ],
+        ["Escribió **una*y* dos** cosas.", "una*y", "una y", "Escribió **una *y* dos** cosas."],
+    ];
+    for (const [source, word, replacement, expected] of cases) {
+        test(`${word} → ${replacement}`, () => {
+            const result = apply(source, word, replacement);
+            expect(result).toBe(expected);
+            expect(structure(result!)).toBe(structure(source));
+        });
+    }
+
+    test("only suggestions adding a space at a marker count as forgotten spaces", () => {
+        const source = "experimentos y**aseguró que** fin";
+        const { offset, annotations } = new SyntaxTree(source).annotate(undefined);
+        const start = offset + annotations.optimize();
+        const from = source.indexOf("y**aseguró") - start;
+        const to = from + "y**aseguró".length;
+        expect(annotations.splitsAtMarkup(from, to, "y aseguró")).toBeTrue();
+        expect(annotations.splitsAtMarkup(from, to, "aseguró")).toBeFalse();
+        // Without a marker there, a split is not preferred: «mercao» → «merca o»
+        const plain = new SyntaxTree("en el mercao hoy").annotate(undefined).annotations;
+        plain.optimize();
+        expect(plain.splitsAtMarkup(6, 12, "merca o")).toBeFalse();
+    });
+});
+
+describe("formatting check", () => {
+    test("sees when an edit changes how markdown is read", () => {
+        // Deleting the space joins two underscores, and the emphasis changes
+        expect(formattingOf("_Familia francesa_ _._")).not.toBe(
+            formattingOf("_Familia francesa__._"),
+        );
+        expect(formattingOf("y**aseguró**")).toBe(formattingOf("y **aseguró**"));
+        expect(formattingOf("y**aseguró**")).not.toBe(formattingOf("y** aseguró**"));
+        expect(formattingOf("Es ==muy== cierto %%nota%%")).toBe(
+            formattingOf("Es ==muy== cierto. %%nota%%"),
+        );
     });
 });

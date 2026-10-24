@@ -8,20 +8,27 @@ import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 import { math } from "micromark-extension-math";
 import { mathFromMarkdown } from "mdast-util-math";
 
-import { AnnotatedText } from "../annotated";
+import { AnnotatedText, Attach } from "../annotated";
 import { wikiLink } from "./micromark-wikilink";
 import { wikiLinkFromMarkdown } from "./mdast-wikilink";
 import * as api from "../api";
 
 const ESCAPE = /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g;
 
+/** A range of Obsidian syntax, and the text it belongs to, if any (see {@link Attach}) */
+export interface HiddenRange {
+    from: number;
+    to: number;
+    attach?: Attach;
+}
+
 /**
  * Ranges of Obsidian syntax that is not prose and that the markdown parser does not know:
  * comments, callout markers, block IDs, tags, the "!" of embeds and the "==" of highlights.
  * Inline tokens take one neighbouring space with them, so no double space is left behind.
  */
-export function obsidianSyntax(text: string): api.LTRange[] {
-    const ranges: api.LTRange[] = [];
+export function obsidianSyntax(text: string): HiddenRange[] {
+    const ranges: HiddenRange[] = [];
     const inline = (from: number, to: number) => {
         if (text[to] === " " && (from === 0 || /\s/.test(text[from - 1]))) to++;
         else if (text[from - 1] === " " && (to === text.length || /\s/.test(text[to]))) from--;
@@ -32,17 +39,19 @@ export function obsidianSyntax(text: string): api.LTRange[] {
         else inline(m.index, m.index + m[0].length);
     }
     for (const m of text.matchAll(/^((?:[ \t]*>)+[ \t]*)(\[![^\]\n]+\][+-]? ?)/gm))
-        ranges.push({ from: m.index + m[1].length, to: m.index + m[0].length });
+        ranges.push({ from: m.index + m[1].length, to: m.index + m[0].length, attach: "next" });
     for (const m of text.matchAll(/ \^[A-Za-z0-9-]+(?=[ \t]*$)/gm))
-        ranges.push({ from: m.index, to: m.index + m[0].length });
+        ranges.push({ from: m.index, to: m.index + m[0].length, attach: "previous" });
     for (const m of text.matchAll(/(^|\s)(#(?=[\p{L}\p{N}_/-]*[\p{L}_/-])[\p{L}\p{N}_/-]+)/gmu)) {
         const start = m.index + m[1].length;
         inline(start, start + m[2].length);
     }
-    for (const m of text.matchAll(/!(?=\[\[)/g)) ranges.push({ from: m.index, to: m.index + 1 });
+    for (const m of text.matchAll(/!(?=\[\[)/g))
+        ranges.push({ from: m.index, to: m.index + 1, attach: "next" });
     for (const m of text.matchAll(/==(?=\S)[^=\n]*?\S==/g)) {
-        ranges.push({ from: m.index, to: m.index + 2 });
-        ranges.push({ from: m.index + m[0].length - 2, to: m.index + m[0].length });
+        ranges.push({ from: m.index, to: m.index + 2, attach: "next" });
+        const end = m.index + m[0].length;
+        ranges.push({ from: end - 2, to: end, attach: "previous" });
     }
     return ranges.sort((a, b) => a.from - b.from);
 }
@@ -51,7 +60,7 @@ export function obsidianSyntax(text: string): api.LTRange[] {
  * Replace the characters in the ranges with letters, keeping line breaks and positions.
  * Letters cannot change the structure, unlike spaces (four at the start of a line make code).
  */
-function mask(text: string, ranges: api.LTRange[]): string {
+function mask(text: string, ranges: HiddenRange[]): string {
     if (!ranges.length) return text;
     // UTF-16 code units, as the ranges use
     const out = text.split("");
@@ -60,24 +69,44 @@ function mask(text: string, ranges: api.LTRange[]): string {
     return out.join("");
 }
 
+/** Markdown as the plugin parses it, with the markers Obsidian adds */
+function parseMarkdown(text: string): Root {
+    return fromMarkdown(text, {
+        extensions: [gfm(), frontmatter(["yaml"]), math(), wikiLink({ aliasDivider: "|" })],
+        mdastExtensions: [
+            gfmFromMarkdown(),
+            frontmatterFromMarkdown(["yaml"]),
+            mathFromMarkdown(),
+            wikiLinkFromMarkdown(),
+        ],
+    });
+}
+
+/**
+ * The formatting of markdown: its elements in order (emphasis, links, footnotes…) and
+ * Obsidian's own markers. A change that keeps it has not broken any formatting.
+ */
+export function formattingOf(text: string): string {
+    const types: string[] = [];
+    const walk = (node: { type: string; children?: unknown[] }) => {
+        if (!["root", "paragraph", "text"].includes(node.type)) types.push(node.type);
+        for (const child of node.children ?? []) walk(child as typeof node);
+    };
+    walk(parseMarkdown(mask(text, obsidianSyntax(text))));
+    const markers = obsidianSyntax(text).map(r => text.slice(r.from, r.to).trim());
+    return JSON.stringify([types, markers]);
+}
+
 export class SyntaxTree {
     #raw: string;
     #tree: Root;
-    #hidden: api.LTRange[];
+    #hidden: HiddenRange[];
 
     constructor(text: string) {
         this.#hidden = obsidianSyntax(text);
         text = mask(text, this.#hidden);
         this.#raw = text;
-        this.#tree = fromMarkdown(text, {
-            extensions: [gfm(), frontmatter(["yaml"]), math(), wikiLink({ aliasDivider: "|" })],
-            mdastExtensions: [
-                gfmFromMarkdown(),
-                frontmatterFromMarkdown(["yaml"]),
-                mathFromMarkdown(),
-                wikiLinkFromMarkdown(),
-            ],
-        });
+        this.#tree = parseMarkdown(text);
     }
 
     annotate(range?: api.LTRange): { offset: number; annotations: AnnotatedText } {
@@ -187,9 +216,9 @@ class AnnotationVisitor {
             }
         }
 
-        // Padding
+        // Padding before the node: markup that opens it, such as "**" or "["
         if (this.offset < startOffset) {
-            this.output.pushMarkup(" ".repeat(startOffset - this.offset));
+            this.output.pushMarkup(" ".repeat(startOffset - this.offset), undefined, "next");
             this.offset = startOffset;
         }
 
@@ -278,9 +307,10 @@ class AnnotationVisitor {
                 break;
         }
 
-        // Padding
+        // Padding after the content: markup that closes the node, such as "**", "](url)" or a
+        // footnote reference
         if (this.offset < endOffset) {
-            this.output.pushMarkup(" ".repeat(endOffset - this.offset));
+            this.output.pushMarkup(" ".repeat(endOffset - this.offset), undefined, "previous");
             this.offset = endOffset;
         }
     }

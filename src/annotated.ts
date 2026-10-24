@@ -1,4 +1,13 @@
-export type Annotation = { text: string } | { markup: string; interpretAs?: string };
+/**
+ * Markup is either attached to the text after it, like an opening "**" or "[", or to the
+ * text before it, like a closing "**", "](url)" or a footnote "[^1]". Text inserted next
+ * to markup goes on its other side, so the formatting stays intact: «y **aseguró**».
+ */
+export type Attach = "next" | "previous";
+
+export type Annotation =
+    | { text: string }
+    | { markup: string; interpretAs?: string; attach?: Attach };
 
 /** A replacement of the raw text between `from` and `to` */
 export interface TextEdit {
@@ -19,8 +28,8 @@ export class AnnotatedText {
         if (text.length > 0) this.annotations.push({ text });
     }
 
-    pushMarkup(markup: string, interpretAs?: string) {
-        this.annotations.push({ markup, interpretAs });
+    pushMarkup(markup: string, interpretAs?: string, attach?: Attach) {
+        this.annotations.push(attach ? { markup, interpretAs, attach } : { markup, interpretAs });
     }
 
     extend(other: AnnotatedText) {
@@ -34,7 +43,7 @@ export class AnnotatedText {
      * Turn the text in the ranges into markup, so it is not checked or changed.
      * `base` is the position of this text in the note, which the ranges refer to.
      */
-    hide(ranges: readonly { from: number; to: number }[], base: number) {
+    hide(ranges: readonly { from: number; to: number; attach?: Attach }[], base: number) {
         if (!ranges.length) return;
         const output: Annotation[] = [];
         let pos = base;
@@ -52,7 +61,8 @@ export class AnnotatedText {
                 const from = Math.max(r.from, cut);
                 const to = Math.min(r.to, end);
                 if (from > cut) output.push({ text: a.text.slice(cut - start, from - start) });
-                output.push({ markup: a.text.slice(from - start, to - start) });
+                const markup = a.text.slice(from - start, to - start);
+                output.push(r.attach ? { markup, attach: r.attach } : { markup });
                 cut = to;
             }
             if (cut < end) output.push({ text: a.text.slice(cut - start) });
@@ -76,7 +86,14 @@ export class AnnotatedText {
             } else {
                 if ("text" in last && "text" in a) {
                     last.text += a.text;
-                } else if ("markup" in last && "markup" in a) {
+                } else if (
+                    "markup" in last &&
+                    "markup" in a &&
+                    // Invisible markup attached to different sides stays apart, to know
+                    // where inserted text goes; markup that reads as text merges as before
+                    (last.attach === a.attach || last.interpretAs || a.interpretAs)
+                ) {
+                    if (last.attach !== a.attach) delete last.attach;
                     last.markup += a.markup;
                     if (last.interpretAs && a.interpretAs) last.interpretAs += a.interpretAs;
                     else if (a.interpretAs) last.interpretAs = a.interpretAs;
@@ -150,9 +167,22 @@ export class AnnotatedText {
      * `replacement`, with positions relative to `from`. Null if a change would touch
      * markup, such as an emphasis marker or a link, as that would break the formatting.
      */
-    safeEdits(from: number, to: number, replacement: string): TextEdit[] | null {
+    /**
+     * The checked characters in [from, to) with their raw positions (null for markup), and
+     * the invisible markup by the index of the character it precedes. Null if the range
+     * cuts through markup.
+     */
+    private rangeChars(
+        from: number,
+        to: number,
+    ): {
+        chars: { ch: string; raw: number | null }[];
+        gaps: Map<number, { from: number; to: number; attach?: Attach }[]>;
+    } | null {
         // The checked characters in the range, with their raw positions (null for markup)
         const chars: { ch: string; raw: number | null }[] = [];
+        // Markup that reads as nothing, by the index of the checked character it precedes
+        const gaps = new Map<number, { from: number; to: number; attach?: Attach }[]>();
         let pos = 0;
         for (const a of this.annotations) {
             const raw = "text" in a ? a.text : a.markup;
@@ -165,9 +195,35 @@ export class AnnotatedText {
                 // Markup only partly in the range cannot be kept intact
                 if (start < from || end > to) return null;
                 for (const ch of a.interpretAs ?? "") chars.push({ ch, raw: null });
+                if (!a.interpretAs && raw.length) {
+                    const gap = gaps.get(chars.length) ?? [];
+                    gap.push({ from: start, to: end, attach: a.attach });
+                    gaps.set(chars.length, gap);
+                }
             }
             if (start >= to) break;
         }
+        return { chars, gaps };
+    }
+
+    /**
+     * Whether a suggestion only adds spaces where formatting markers sit, as in «y aseguró»
+     * for «y**aseguró**»: a space forgotten next to a marker is a common slip.
+     */
+    splitsAtMarkup(from: number, to: number, suggestion: string): boolean {
+        const range = this.rangeChars(from, to);
+        if (!range) return false;
+        const hunks = diff(range.chars.map(c => c.ch).join(""), suggestion);
+        return (
+            hunks.length > 0 &&
+            hunks.every(h => h.from === h.to && /^\s+$/.test(h.insert) && range.gaps.has(h.from))
+        );
+    }
+
+    safeEdits(from: number, to: number, replacement: string): TextEdit[] | null {
+        const range = this.rangeChars(from, to);
+        if (!range) return null;
+        const { chars, gaps } = range;
 
         const edits: TextEdit[] = [];
         for (const hunk of diff(chars.map(c => c.ch).join(""), replacement)) {
@@ -177,7 +233,18 @@ export class AnnotatedText {
                 const next = chars[hunk.from]?.raw;
                 const previous = chars[hunk.from - 1]?.raw;
                 if (next === null && previous === null) return null;
-                const at = next ?? (previous != null ? previous + 1 : from);
+                let at = next ?? (previous != null ? previous + 1 : from);
+                // Between the two, after the markup attached to the text before (a closing
+                // "**", a footnote) and before the markup attached to the text after (an
+                // opening "**"): «y**aseguró**» becomes «y **aseguró**», not «y** aseguró**»
+                const gap = gaps.get(hunk.from);
+                if (gap && next != null && previous != null) {
+                    at = gap[0].from;
+                    for (const markup of gap) {
+                        if (markup.attach === "next") break;
+                        at = markup.to;
+                    }
+                }
                 edits.push({ from: at - from, to: at - from, insert: hunk.insert });
                 continue;
             }

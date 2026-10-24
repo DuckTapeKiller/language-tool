@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as Bun from "bun";
 import * as api from "../api";
+import { suggestionChange } from "../helpers";
 import { SyntaxTree } from "../markdown/parser";
 import { DEFAULT_SETTINGS, LTOptions } from "../settings";
 
@@ -264,5 +265,51 @@ describe.skipIf(!available)(`Title case in Spanish headings with ${server}`, () 
 
     test("names alone are not title case", async () => {
         expect(await headingFix("Gabriel García Márquez")).toEqual([]);
+    });
+});
+
+describe.skipIf(!available)(`Formatting kept with ${server}`, () => {
+    async function lintsFor(text: string) {
+        const options: LTOptions = {
+            ...DEFAULT_SETTINGS,
+            endpoint: "custom",
+            serverUrl: server,
+            preferredLanguages: ["en", "es"],
+            otherLanguages: "ignore",
+            paragraphLanguages: true,
+        };
+        const { offset, annotations } = new SyntaxTree(text).annotate(undefined);
+        const { requests } = api.planRequests(
+            options,
+            offset + annotations.optimize(),
+            annotations,
+        );
+        return (
+            await Promise.all(requests.map(r => api.check(options, null, r.offset, r.text, text)))
+        ).flat();
+    }
+
+    test("a suggestion that would change the emphasis is withheld", async () => {
+        const text =
+            "_**Demandante**_: _Familia francesa_ _._\n\nOtro párrafo en español para el contexto.";
+        const lint = (await lintsFor(text)).find(l =>
+            text.slice(l.range.from, l.range.to).includes("_."),
+        );
+        expect(lint).toBeDefined();
+        expect(lint!.edits?.every(e => e === null)).toBeTrue();
+    });
+
+    test("the space forgotten before bold is added outside it, first", async () => {
+        const text =
+            "En 2005, el director de Viral II, Alfred Prince, anunció el fin de todos los experimentos y**aseguró que la organización** **estaba haciendo arreglos para «cuidar de por vida» a los chimpancés**.";
+        const lint = (await lintsFor(text)).find(
+            l => text.slice(l.range.from, l.range.to) === "y**aseguró",
+        )!;
+        expect(lint.replacements[0]).toBe("y aseguró");
+        const change = suggestionChange(lint, lint.range, 0)!;
+        let out = text;
+        for (const c of [...change].sort((a, b) => b.from - a.from))
+            out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+        expect(out).toContain("experimentos y **aseguró que la organización** **estaba");
     });
 });

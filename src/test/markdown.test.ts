@@ -17,9 +17,18 @@ describe("markdown parsing", () => {
         let { annotations } = syntax.annotate(undefined);
         expect(annotations.length()).toBe(input.length);
         expect(annotations.annotations[0]).toStrictEqual({ text: "Hello " });
-        expect(annotations.annotations[1]).toStrictEqual({ markup: "  ", interpretAs: undefined });
+        // "[[" opens the link and "]]" closes it
+        expect(annotations.annotations[1]).toStrictEqual({
+            markup: "  ",
+            interpretAs: undefined,
+            attach: "next",
+        });
         expect(annotations.annotations[2]).toStrictEqual({ text: "World" });
-        expect(annotations.annotations[3]).toStrictEqual({ markup: "  ", interpretAs: undefined });
+        expect(annotations.annotations[3]).toStrictEqual({
+            markup: "  ",
+            interpretAs: undefined,
+            attach: "previous",
+        });
         expect(annotations.annotations[4]).toStrictEqual({ text: "!" });
 
         expect(syntax.isInside(9, "wikiLink")).toBeTrue();
@@ -35,9 +44,14 @@ describe("markdown parsing", () => {
         expect(annotations.annotations[1]).toStrictEqual({
             markup: "        ",
             interpretAs: undefined,
+            attach: "next",
         });
         expect(annotations.annotations[2]).toStrictEqual({ text: "alias" });
-        expect(annotations.annotations[3]).toStrictEqual({ markup: "  ", interpretAs: undefined });
+        expect(annotations.annotations[3]).toStrictEqual({
+            markup: "  ",
+            interpretAs: undefined,
+            attach: "previous",
+        });
         expect(annotations.annotations[4]).toStrictEqual({ text: "!" });
     });
 

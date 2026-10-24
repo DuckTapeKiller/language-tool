@@ -2,6 +2,7 @@ import { endpointFromUrl, getEndpoint, LTOptions } from "./settings";
 import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
 import { AnnotatedText, TextEdit } from "./annotated";
+import { formattingOf } from "./markdown/parser";
 import { errorMessage } from "./helpers";
 import { sentenceCase, spanishRules } from "./rules/spanish";
 
@@ -169,10 +170,15 @@ export async function check(
     const lints: LTLint[] = matches.map(match => {
         const from = jsonPath<number>("$.offset@number()", match);
         const to = from + jsonPath<number>("$.length@number()", match);
-        const replacements = jsonPathA<string>("$.replacements[*].value@string()", match);
+        const text = annotated.extractSlice(from, to) || "";
+        // A space forgotten next to a formatting marker («y**aseguró**») is the likely
+        // mistake, so the suggestion that only adds it comes first
+        const suggestions = jsonPathA<string>("$.replacements[*].value@string()", match);
+        const split = suggestions.filter(r => annotated.splitsAtMarkup(from, to, r));
+        const replacements = [...split, ...suggestions.filter(r => !split.includes(r))];
         return {
             range: { from: offset + from, to: offset + to },
-            text: annotated.extractSlice(from, to) || "",
+            text,
             title: jsonPath<string>("$.shortMessage@string()", match),
             message: jsonPath<string>("$.message@string()", match),
             replacements,
@@ -183,11 +189,45 @@ export async function check(
     });
 
     const detected = jsonPath<string>("$.language.code@string()", res.json as JsonValue);
+    let result = lints;
     if (options.spanishRules && detected.toLowerCase().startsWith("es")) {
         const all = withSpanishLints(options, offset, annotated, lints, source);
-        return keepProperNames(options, apiKey, detected, offset, annotated, all, source);
+        result = await keepProperNames(options, apiKey, detected, offset, annotated, all, source);
     }
-    return lints;
+    return source ? withheldIfFormattingChanges(source, result) : result;
+}
+
+/// Characters of markdown and Obsidian syntax near which a change may alter the formatting
+const MARKUP_NEARBY = /[*_[\]()`<>=~^\\|$!#%]/;
+
+/**
+ * Suggestions next to markup are tried on their paragraph first: if the markdown would
+ * then be read differently, e.g. «_a_ _._» → «_a__._», the suggestion is shown but cannot
+ * be applied. Rules that change formatting on purpose are left as they are.
+ */
+function withheldIfFormattingChanges(source: string, lints: LTLint[]): LTLint[] {
+    return lints.map(lint => {
+        if (lint.ruleId === "RAE_COMILLAS_Y_CURSIVA" || !lint.edits) return lint;
+        const { from, to } = lint.range;
+        if (!MARKUP_NEARBY.test(source.slice(Math.max(0, from - 2), to + 2))) return lint;
+        // The paragraph around the match
+        const startAt = source.lastIndexOf("\n\n", from);
+        const start = startAt < 0 ? 0 : startAt + 2;
+        const endAt = source.indexOf("\n\n", to);
+        const end = endAt < 0 ? source.length : endAt;
+        const paragraph = source.slice(start, end);
+        const before = formattingOf(paragraph);
+        const edits = lint.edits.map(edits => {
+            if (!edits) return edits;
+            let changed = paragraph;
+            for (const e of [...edits].sort((a, b) => b.from - a.from)) {
+                const at = from - start;
+                changed = changed.slice(0, at + e.from) + e.insert + changed.slice(at + e.to);
+            }
+            return formattingOf(changed) === before ? edits : null;
+        });
+        return { ...lint, edits };
+    });
 }
 
 /**
