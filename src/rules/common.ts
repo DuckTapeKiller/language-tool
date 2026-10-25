@@ -21,8 +21,10 @@ export type Rule = (text: string, context: Context) => RuleMatch[];
 export const THIN_SPACE = " ";
 
 /// Abbreviations whose full stop may precede a closing quotation mark or bracket
+/// Abbreviations, which keep their full stop: titles, references and plurals of doubled
+/// letters («JJ. OO.», «EE. UU.»)
 export const ABBREVIATIONS =
-    /(?:^|[\s(«“"‘—―])(?:etc|p\. ej|Sr|Sra|Srta|Dr|Dra|D|Dña|Ud|Uds|pág|págs|p|pp|cap|vol|n|núm|art|ed|eds|trad|coord|cf|vid|ss|ca|aprox|fol|id|ib|ibid|a\. C|d\. C|EE\. UU|[A-ZÁÉÍÓÚÑa-zñ])$/u;
+    /(?:^|[\s(«“"‘—―])(?:etc|p\. ej|ej|Sr|Sra|Srta|Dr|Dra|D|Dña|Ud|Uds|Ing|Lic|Arq|Prof|Profa|Mons|Excmo|Excma|Ilmo|Ilma|Rmo|Rma|Rdo|Rda|Rvdo|Rvda|Rvdmo|Rvdma|Sto|Sta|Mtro|Mtra|Gral|Cía|Hno|Hna|Hnos|Avda|Av|pág|págs|p|pp|cap|vol|n|núm|art|ed|eds|trad|coord|cf|vid|ss|ca|aprox|fol|fig|figs|op\. cit|id|ib|ibid|tel|máx|mín|a\. C|d\. C|EE\. UU|([A-ZÁÉÍÓÚÑ])\1|[A-ZÁÉÍÓÚÑa-zñ])$/u;
 
 export const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 export const isUpper = (ch: string) => ch !== ch.toLowerCase() && ch === ch.toUpperCase();
@@ -62,3 +64,20 @@ export function anyAccents(text: string): string {
         .replace(/['’]/g, "['’]")
         .replace(/ +/g, "\\s+");
 }
+
+/// Words of other languages, as in a quoted title: «What Is Dowsing?», «Mais que doit on…?»
+export const FOREIGN = new RegExp(
+    "(?:^|[^\\p{L}])(?:" +
+        [
+            // English
+            "the|you|what|is|are|does|did|how|why|who|where|when|this|that|it|will|would|should|could|was|were|my|your|we|they|and|of|to|or|said",
+            "(?:can|don|isn|doesn|I)['’](?:t|m)",
+            // French
+            "il|elle|nous|vous|pas|mais|est|sont|et|du|au|aux|avec|cette|ces|ont|été|être|fait|qui|pour|dans",
+            "(?:l|d|qu|c|n|s|j)['’]\\p{L}+",
+            // Italian and the Nordic languages
+            "della|delle|degli|sono|questo|questa|anche|più|perché|og|ikke|i",
+        ].join("|") +
+        ")(?![\\p{L}])",
+    "iu",
+);

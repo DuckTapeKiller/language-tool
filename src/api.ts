@@ -2,8 +2,8 @@ import { endpointFromUrl, getEndpoint, LTOptions } from "./settings";
 import { RequestUrlParam, RequestUrlResponse, requestUrl } from "obsidian";
 import { JSONPath } from "jsonpath-plus";
 import { AnnotatedText, TextEdit } from "./annotated";
-import { emphasisRanges, formattingOf } from "./markdown/parser";
-import { errorMessage } from "./helpers";
+import { emphasisRanges, formattingOf, formattingRuns } from "./markdown/parser";
+import { errorMessage, isSpelling } from "./helpers";
 import { foreignPhrases } from "./rules/latin";
 import { sentenceCase, spanishRules } from "./rules/spanish";
 
@@ -190,12 +190,65 @@ export async function check(
     });
 
     const detected = jsonPath<string>("$.language.code@string()", res.json as JsonValue);
-    let result = lints;
+    let result = lints.map(lint => closeUnpaired(lint, source));
     if (options.spanishRules && detected.toLowerCase().startsWith("es")) {
-        const all = withSpanishLints(options, offset, annotated, lints, source);
+        const all = withSpanishLints(options, offset, annotated, result, source);
         result = await keepProperNames(options, apiKey, detected, offset, annotated, all, source);
     }
     return source ? withheldIfFormattingChanges(source, result) : result;
+}
+
+/// The sign that closes each opening sign
+const CLOSING: Record<string, string> = {
+    '"': '"',
+    "'": "'",
+    "“": "”",
+    "«": "»",
+    "‘": "’",
+    "(": ")",
+    "[": "]",
+};
+
+/**
+ * LanguageTool's fix for a sign that is never closed is an empty pair («""»), which only
+ * doubles it. Instead, the sign is closed at the end of its line, before a final full stop
+ * in Spanish («Dijo que "no vendría nunca".»), or it is removed.
+ */
+function closeUnpaired(lint: LTLint, source?: string): LTLint {
+    if (!/_UNPAIRED_(BRACKETS|QUOTES)$/.test(lint.ruleId)) return lint;
+    const { from, to } = lint.range;
+    const pair = (r: string) => r.length === 2 && CLOSING[r[0]] === r[1];
+    const kept = lint.replacements.flatMap((r, i) => (pair(r) ? [] : [i]));
+    const replacements = kept.map(i => lint.replacements[i]);
+    const edits = kept.map(i => lint.edits?.[i] ?? null);
+    const sign = source?.slice(from, to) ?? "";
+    const closing = CLOSING[sign];
+    if (source && closing && opensQuotation(source, from, to)) {
+        const lineEnd = source.indexOf("\n", to);
+        // Before the block ID or comment that ends the line
+        const line = source.slice(to, lineEnd < 0 ? source.length : lineEnd);
+        let at = to + line.replace(/(?:\s+\^[A-Za-z0-9-]+|\s*%%[^%]*%%)+\s*$/, "").length;
+        while (at > to && /\s/.test(source[at - 1])) at--;
+        // Inside the bold or italics that the sign is in: «**"Texto**» → «**"Texto"**»
+        const markers = /[*_=~]+$/.exec(source.slice(to, at))?.[0] ?? "";
+        if (markers && !/^[*_=~]/.test(source.slice(to))) at -= markers.length;
+        const stop =
+            lint.ruleId.startsWith("ES_") && source[at - 1] === "." && source[at - 2] !== ".";
+        if (stop) at--;
+        if (at > to) {
+            const tail = source.slice(Math.max(to, at - 24), at);
+            const shown = "…" + tail.slice(tail.indexOf(" ") + 1) + closing + (stop ? "." : "");
+            replacements.unshift(shown);
+            edits.unshift([{ from: at - from, to: at - from, insert: closing }]);
+        }
+    }
+    return { ...lint, replacements, edits };
+}
+
+/// Whether the sign opens: a straight quotation mark does when it is joined to the next word
+function opensQuotation(source: string, from: number, to: number): boolean {
+    if (source[from] !== '"' && source[from] !== "'") return true;
+    return /\S/.test(source[to] ?? " ") && /^$|[\s([¿¡—–*_=~]/.test(source[from - 1] ?? "");
 }
 
 /// Characters of markdown and Obsidian syntax near which a change may alter the formatting
@@ -214,32 +267,92 @@ function withheldIfFormattingChanges(source: string, lints: LTLint[]): LTLint[] 
     return lints.map(lint => {
         if (FORMATTING_RULES.has(lint.ruleId) || !lint.edits) return lint;
         const { from, to } = lint.range;
-        if (!MARKUP_NEARBY.test(source.slice(Math.max(0, from - 2), to + 2))) return lint;
-        // The paragraph around the match
-        const startAt = source.lastIndexOf("\n\n", from);
-        const start = startAt < 0 ? 0 : startAt + 2;
-        const endAt = source.indexOf("\n\n", to);
-        const end = endAt < 0 ? source.length : endAt;
+        // At the start of a line, a space can make a list or a heading: «7.Por» → «7. Por»
+        const lineStart = source.lastIndexOf("\n", from - 1) + 1;
+        const atStart = /^[\s>]*[\d.)\-+*#]*$/.test(source.slice(lineStart, from));
+        if (!atStart && !MARKUP_NEARBY.test(source.slice(Math.max(0, from - 2), to + 2)))
+            return lint;
+        const { start, end } = surroundings(source, from, to);
         const paragraph = source.slice(start, end);
         const before = formattingOf(paragraph);
+        const at = from - start;
         const edits = lint.edits.map(edits => {
             if (!edits) return edits;
-            let changed = paragraph;
-            for (const e of [...edits].sort((a, b) => b.from - a.from)) {
-                const at = from - start;
-                changed = changed.slice(0, at + e.from) + e.insert + changed.slice(at + e.to);
-            }
-            return formattingOf(changed) === before ? edits : null;
+            if (formattingOf(applyEdits(paragraph, at, edits)) === before) return edits;
+            const joined = joinRuns(paragraph, at, edits);
+            if (!joined) return null;
+            const changed = applyEdits(paragraph, at, joined.edits);
+            return formattingOf(changed) === formattingOf(joined.reference) ? joined.edits : null;
         });
         return { ...lint, edits };
     });
 }
 
 /**
+ * The paragraph around a match, whose formatting a suggestion must keep. In a table it is
+ * the row, and in a very long paragraph the line of the match: a note that is one long
+ * table would otherwise be read again whole for every suggestion in it.
+ */
+function surroundings(source: string, from: number, to: number): { start: number; end: number } {
+    const startAt = source.lastIndexOf("\n\n", from);
+    const endAt = source.indexOf("\n\n", to);
+    const start = startAt < 0 ? 0 : startAt + 2;
+    const end = endAt < 0 ? source.length : endAt;
+    const lineStart = source.lastIndexOf("\n", from - 1) + 1;
+    const lineEndAt = source.indexOf("\n", to);
+    const lineEnd = lineEndAt < 0 ? source.length : lineEndAt;
+    const row = /^[ \t]*\|/.test(source.slice(lineStart, lineEnd));
+    if (!row && end - start <= 20000) return { start, end };
+    // Without its indent, which alone would make the line read as code
+    const indent = /^[ \t]*/.exec(source.slice(lineStart, lineEnd))![0].length;
+    return { start: Math.min(from, lineStart + indent), end: lineEnd };
+}
+
+/** The text with the edits applied, which are relative to `at` */
+function applyEdits(text: string, at: number, edits: readonly TextEdit[]): string {
+    let changed = text;
+    for (const e of [...edits].sort((a, b) => b.from - a.from))
+        changed = changed.slice(0, at + e.from) + e.insert + changed.slice(at + e.to);
+    return changed;
+}
+
+/**
+ * A space deleted between two runs of the same formatting takes their markers with it, so
+ * a word split in two is joined in one run: «**desarroll** **aron**» → «**desarrollaron**».
+ * Also returns the text with only the runs joined, whose formatting the result must keep.
+ * Null if no edit deletes such a space.
+ */
+function joinRuns(
+    text: string,
+    at: number,
+    edits: readonly TextEdit[],
+): { edits: TextEdit[]; reference: string } | null {
+    const runs = formattingRuns(text);
+    const joins: { from: number; to: number }[] = [];
+    const joined = edits.map(e => {
+        const from = at + e.from;
+        const to = at + e.to;
+        if (e.insert || !/^\s+$/.test(text.slice(from, to))) return e;
+        // The closing marker before the space, and the same opening marker after it
+        const marker = /([*_~])\1*$/.exec(text.slice(0, from))?.[0];
+        if (!marker || !text.startsWith(marker, to) || text[to + marker.length] === marker[0])
+            return e;
+        if (!runs.some(r => r.to === from) || !runs.some(r => r.from === to)) return e;
+        joins.push({ from: from - marker.length, to: to + marker.length });
+        return { from: e.from - marker.length, to: e.to + marker.length, insert: "" };
+    });
+    if (!joins.length) return null;
+    let reference = text;
+    for (const j of joins.sort((a, b) => b.from - a.from))
+        reference = reference.slice(0, j.from) + "x" + reference.slice(j.to);
+    return { edits: joined, reference };
+}
+
+/**
  * Headings in title case are put in sentence case, but proper names keep their capital.
- * A word is a proper name if LanguageTool marks its lowered form as a misspelling of it
- * («cartagena» → «Cartagena»), or if the note writes it with a capital in the middle of
- * a sentence («la vida de Pedro de Heredia»). A heading whose capitals are all proper
+ * A word is a proper name if its lowered form is a misspelling («cartagena», «ayiti»,
+ * «saint-domingue»), or if the note writes it with a capital in the middle of a sentence
+ * («la vida de Pedro de Heredia»). A heading whose capitals are all proper
  * names is not title case after all, and is not reported.
  */
 async function keepProperNames(
@@ -263,7 +376,8 @@ async function keepProperNames(
         }
         const original = lint.text;
         const lowered = sentenceCase(original);
-        const names = new Set<number>();
+        // The ranges of the lowered title that are misspelt, so written as names
+        const names: { from: number; to: number }[] = [];
         try {
             const params: Record<string, string> = { text: lowered, language };
             if (endpointFromUrl(options.serverUrl) !== "public" && apiKey && options.username) {
@@ -284,7 +398,10 @@ async function keepProperNames(
                 const length = jsonPath<number>("$.length@number()", match);
                 const word = original.slice(at, at + length);
                 const suggestions = jsonPathA<string>("$.replacements[*].value@string()", match);
-                if (suggestions.includes(word)) names.add(at);
+                const category = jsonPath<string>("$.rule.category.id@string()", match);
+                const rule = jsonPath<string>("$.rule.id@string()", match);
+                if (isSpelling(category, rule) || suggestions.includes(word))
+                    names.push({ from: at, to: at + length });
             }
         } catch (e) {
             // Without LanguageTool's answer, the plain sentence case is still offered
@@ -292,7 +409,8 @@ async function keepProperNames(
         }
         const fixed = sentenceCase(
             original,
-            (word, index) => names.has(index) || capitalisedInBody(word),
+            (word, index) =>
+                names.some(n => n.from <= index && index < n.to) || capitalisedInBody(word),
         );
         if (fixed === original) continue;
         const from = lint.range.from - offset;
@@ -325,6 +443,19 @@ export interface LocalMatch {
 /// Closing quotation mark for each opening one
 const QUOTE_PAIRS: Record<string, string> = { "“": "”", '"': '"', "«": "»" };
 
+/// What is found in the whole note, kept for the other requests of a check of that note
+let noteCache: { source: string; values: Map<string, unknown> } = { source: "", values: new Map() };
+
+/**
+ * A result for the whole note, computed once: a long note is checked in hundreds of
+ * requests, and scanning the whole note for each made checking it on open slow.
+ */
+function perNote<T>(source: string, key: string, compute: () => T): T {
+    if (noteCache.source !== source) noteCache = { source, values: new Map() };
+    if (!noteCache.values.has(key)) noteCache.values.set(key, compute());
+    return noteCache.values.get(key) as T;
+}
+
 /**
  * Quotations whose whole text is in italics, such as “*At Day's Close*”.
  * Quotation marks and italics are never combined; as a title of a complete work goes in
@@ -338,7 +469,10 @@ export function italicQuotations(
     isText: (raw: number) => boolean,
 ): LocalMatch[] {
     const found: LocalMatch[] = [];
-    for (const m of source.matchAll(/([“"«])([*_])([^*_\n]+)\2([”"»])/g)) {
+    const quotations = perNote(source, "italic quotations", () => [
+        ...source.matchAll(/([“"«])([*_])([^*_\n]+)\2([”"»])/g),
+    ]);
+    for (const m of quotations) {
         if (QUOTE_PAIRS[m[1]] !== m[4]) continue;
         const open = m.index - offset;
         const close = open + m[0].length - 1;
@@ -385,7 +519,7 @@ export function foreignExpressions(
 ): LocalMatch[] {
     const found: LocalMatch[] = [];
     let marker: string | undefined;
-    for (const phrase of foreignPhrases(source)) {
+    for (const phrase of perNote(source, "foreign phrases", () => foreignPhrases(source))) {
         const from = phrase.from - offset;
         const to = phrase.to - offset;
         let text = true;
@@ -404,10 +538,10 @@ export function foreignExpressions(
         );
         if (italic && phrase.written === phrase.right) continue;
         // The note's own marker for italics
-        if (marker === undefined) {
+        marker ??= perNote(source, "italic marker", () => {
             const all = emphasisRanges(source);
-            marker = all.filter(e => e.marker === "_").length * 2 > all.length ? "_" : "*";
-        }
+            return all.filter(e => e.marker === "_").length * 2 > all.length ? "_" : "*";
+        });
         const replacement = italic ? phrase.right : marker + phrase.right + marker;
         found.push({
             from,
@@ -444,7 +578,10 @@ function withSpanishLints(
     raw.forEach((r, i) => r != null && plainAt.set(r, i));
     const headings: { from: number; to: number }[] = [];
     if (source) {
-        for (const m of source.matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*$/gm)) {
+        const all = perNote(source, "headings", () => [
+            ...source.matchAll(/^#{1,6}[ \t]+(.+?)[ \t#]*$/gm),
+        ]);
+        for (const m of all) {
             const start = m.index + m[0].indexOf(m[1]) - offset;
             const from = plainAt.get(start);
             const to = plainAt.get(start + m[1].length - 1);

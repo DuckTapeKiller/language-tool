@@ -4,7 +4,7 @@
  * elementos que no se cierran con punto).
  */
 
-import { ABBREVIATIONS, Rule, RuleMatch } from "./common";
+import { ABBREVIATIONS, FOREIGN, Rule, RuleMatch } from "./common";
 
 const OPENING: Record<string, string> = { "?": "¿", "!": "¡" };
 const INTERROGATIVE =
@@ -12,23 +12,6 @@ const INTERROGATIVE =
 /// What goes before a question, outside it: «Juan, ¿vienes?», «Si llueve, ¿vendrás?»
 const OUTSIDE =
     /^(?:si|aunque|puesto que|ya que|como|cuando|entonces|pues|bueno|oye|mira|dime|y|o|pero|así que|en cuanto a|por cierto|francamente|sinceramente|a ver|hola|por favor)(?![\p{L}])/iu;
-/// Words of other languages, as in a quoted title: «What Is Dowsing?», «Mais que doit on…?»
-const FOREIGN = new RegExp(
-    "(?:^|[^\\p{L}])(?:" +
-        [
-            // English
-            "the|you|what|is|are|does|did|how|why|who|where|when|this|that|it|will|would|should|could|was|were|my|your|we|they|and|of|to|or|said",
-            "(?:can|don|isn|doesn|I)['’](?:t|m)",
-            // French
-            "il|elle|nous|vous|pas|mais|est|sont|et|du|au|aux|avec|cette|ces|ont|été|être|fait|qui|pour|dans",
-            "(?:l|d|qu|c|n|s|j)['’]\\p{L}+",
-            // Italian and the Nordic languages
-            "della|delle|degli|sono|questo|questa|anche|più|perché|og|ikke|i",
-        ].join("|") +
-        ")(?![\\p{L}])",
-    "iu",
-);
-
 const isClosingFollower = (ch: string | undefined) =>
     ch === undefined || /[\s»”"’)\]—―,;:.…*_]/u.test(ch);
 
@@ -104,14 +87,16 @@ function missingOpening(
 
 /**
  * A mark that does not close a question or exclamation of the text: «(?)», «[1617?]» and
- * «[!]» are editorial, «5!» is a factorial, « ?» is French, and a title in the middle of a
- * sentence keeps its own marks: «se publicó como Fake! (1969)», «Yu-Gi-Oh!, de Konami».
+ * «[!]» are editorial, «(1875? - 1929)» is an uncertain date, «5!» a factorial, « ?» is
+ * French, and a title in the middle of a sentence keeps its own marks: «se publicó como
+ * Fake! (1969)», «Yu-Gi-Oh!, de Konami».
  */
 function notClosing(text: string, at: number, end: number, segmentStart: number): boolean {
     const before = text[at - 1] ?? "";
     const next = text[end];
     if (!isClosingFollower(next) || /\s/.test(before) || next === "]") return true;
     if (text[at] === "!" && /\d/.test(before)) return true;
+    if (/\d/.test(before) && /^(?:\s*[-–—]\s*\d|[)\]])/u.test(text.slice(end))) return true;
     if (next === ")") {
         const opening = text.lastIndexOf("(", at);
         if (opening >= 0 && !/\s/.test(text.slice(opening + 1, at))) return true;

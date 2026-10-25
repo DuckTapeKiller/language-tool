@@ -1,4 +1,4 @@
-import { ChangeSet, Extension } from "@codemirror/state";
+import { ChangeSet, Extension, Text } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import * as api from "../api";
 
@@ -9,17 +9,31 @@ import * as api from "../api";
  */
 export class ChangeTracker {
     private changes: ChangeSet;
+    /// The document the changes lead to
+    private doc: Text;
 
     constructor(private readonly view: EditorView) {
-        this.changes = ChangeSet.empty(view.state.doc.length);
+        this.doc = view.state.doc;
+        this.changes = ChangeSet.empty(this.doc.length);
         let trackers = TRACKERS.get(view);
         if (!trackers) TRACKERS.set(view, (trackers = new Set()));
         trackers.add(this);
     }
 
-    /** Add the changes of an update */
-    add(changes: ChangeSet) {
+    /** Add the changes of an update, which lead to `doc` */
+    add(changes: ChangeSet, doc: Text = this.doc) {
+        // Changes to another document, after the editor opened another note
+        if (changes.length !== this.changes.newLength) return;
         this.changes = this.changes.compose(changes);
+        this.doc = doc;
+    }
+
+    /**
+     * Whether the editor shows another document than the checked one: opening another
+     * note replaces its state at once, without changes to follow
+     */
+    replaced(): boolean {
+        return this.view.state.doc !== this.doc;
     }
 
     /** Whether text in the range, in positions from when the check started, was edited */
@@ -42,5 +56,6 @@ const TRACKERS = new WeakMap<EditorView, Set<ChangeTracker>>();
 /** Feeds the changes of every editor to the checks running on it */
 export const changeTracking: Extension = EditorView.updateListener.of(update => {
     if (!update.docChanged) return;
-    for (const tracker of TRACKERS.get(update.view) ?? []) tracker.add(update.changes);
+    for (const tracker of TRACKERS.get(update.view) ?? [])
+        tracker.add(update.changes, update.state.doc);
 });

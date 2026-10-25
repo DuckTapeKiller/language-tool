@@ -634,6 +634,8 @@ export default class LanguageToolPlugin extends Plugin {
                 const results = await Promise.all(
                     batch.map(r => api.check(settings, apiKey, r.offset, r.text, text)),
                 );
+                // The editor opened another note meanwhile, which gets its own check
+                if (tracker.replaced()) break;
                 const effects: StateEffect<api.LTLint>[] = [];
                 batch.forEach((request, k) => {
                     // Text edited in the meantime is checked again by the automatic check

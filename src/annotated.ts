@@ -6,8 +6,7 @@
 export type Attach = "next" | "previous";
 
 export type Annotation =
-    | { text: string }
-    | { markup: string; interpretAs?: string; attach?: Attach };
+    { text: string } | { markup: string; interpretAs?: string; attach?: Attach };
 
 /** A replacement of the raw text between `from` and `to` */
 export interface TextEdit {
@@ -43,7 +42,10 @@ export class AnnotatedText {
      * Turn the text in the ranges into markup, so it is not checked or changed.
      * `base` is the position of this text in the note, which the ranges refer to.
      */
-    hide(ranges: readonly { from: number; to: number; attach?: Attach }[], base: number) {
+    hide(
+        ranges: readonly { from: number; to: number; attach?: Attach; interpretAs?: string }[],
+        base: number,
+    ) {
         if (!ranges.length) return;
         const output: Annotation[] = [];
         let pos = base;
@@ -62,7 +64,8 @@ export class AnnotatedText {
                 const to = Math.min(r.to, end);
                 if (from > cut) output.push({ text: a.text.slice(cut - start, from - start) });
                 const markup = a.text.slice(from - start, to - start);
-                output.push(r.attach ? { markup, attach: r.attach } : { markup });
+                if (r.interpretAs) output.push({ markup, interpretAs: r.interpretAs });
+                else output.push(r.attach ? { markup, attach: r.attach } : { markup });
                 cut = to;
             }
             if (cut < end) output.push({ text: a.text.slice(cut - start) });
@@ -327,8 +330,25 @@ export class AnnotatedText {
     private blockAnnotations(lineBreak: string): Annotation[][] {
         const blocks: Annotation[][] = [[]];
         for (const a of this.annotations) {
-            blocks.at(-1)!.push(a);
-            if ("markup" in a && a.interpretAs?.includes(lineBreak)) blocks.push([]);
+            const read = "markup" in a ? (a.interpretAs ?? "") : "";
+            const at = read.lastIndexOf(lineBreak);
+            if (!("markup" in a) || at < 0) {
+                blocks.at(-1)!.push(a);
+                continue;
+            }
+            // What follows the line break, such as the bullet of a list item, starts the
+            // next block: «\n\n• » is not left at the end of the previous one. The bullet
+            // takes the characters of the markup, as LanguageTool fails on a block that
+            // starts with markup of none
+            const end = at + lineBreak.length;
+            const rest = read.slice(end);
+            if (!rest || !a.markup) {
+                blocks.at(-1)!.push(a);
+                blocks.push([]);
+                continue;
+            }
+            blocks.at(-1)!.push({ markup: "", interpretAs: read.slice(0, end) });
+            blocks.push([{ ...a, interpretAs: rest }]);
         }
         return blocks.filter(block => block.length);
     }
@@ -423,7 +443,18 @@ export function diff(
     const a = before.slice(prefix, before.length - suffix);
     const b = after.slice(prefix, after.length - suffix);
     if (!a.length && !b.length) return [];
-    // Long middles are replaced as a whole; aligning them would be slow
+    // Long middles are replaced as a whole, as aligning them would be slow, unless their
+    // characters only change in place, like the quotation marks around a long quotation
+    if (a.length * b.length > 40000 && a.length === b.length) {
+        const hunks: { from: number; to: number; insert: string }[] = [];
+        for (let k = 0; k < a.length; k++) {
+            if (a[k] === b[k]) continue;
+            const start = k;
+            while (k < a.length && a[k] !== b[k]) k++;
+            hunks.push({ from: prefix + start, to: prefix + k, insert: b.slice(start, k) });
+        }
+        return hunks;
+    }
     if (!a.length || !b.length || a.length * b.length > 40000)
         return [{ from: prefix, to: prefix + a.length, insert: b }];
 

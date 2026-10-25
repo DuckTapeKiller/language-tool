@@ -95,8 +95,17 @@ describe("dialogue", () => {
         "—Trajo pan, leche, etc. —dijo Juan.",
         "— agudas",
         "— llanas, cuyo acento recae en la penúltima sílaba;",
+        // Whole dialogues written on one line, as in the notes on punctuation
+        "—¿Qué tal? —dijo Silvia. —Bien —contestó Juan—. ¿Tú? —También bien —respondió Silvia—, o eso creo.",
+        "—¿Qué tal? —dijo Silvia—. ¿Todo en orden? —¡Sí! —contestó Juan—. ¿Tú? —También bien… —respondió Silvia—, o eso creo.",
+        "—Hola, Silvia —dijo Juan—, ¿qué tal? —Todo ha ido bien —dijo Silvia—; al menos, eso creo.",
+        "—¿Qué tal? —Bien. —Silvia notó que Juan se ruborizaba y dijo—: ¿Estás bien? —Sí. —Juan dijo esto tranquilizándose un poco.",
     ];
     for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+    test("a new turn on the same line is checked like the first", () =>
+        expect(fix("—¿Tú? —También bien —Respondió Silvia—, o eso creo.")).toBe(
+            "—¿Tú? —También bien —respondió Silvia—, o eso creo.",
+        ));
 
     test("the dash of the character's words is a raya joined to them", () => {
         expect(fix("— Hola —dijo Juan.")).toBe("—Hola —dijo Juan.");
@@ -131,6 +140,7 @@ describe("asides", () => {
         "Madrid - Barcelona - Valencia.",
         "• Python – un lenguaje",
         "Y entonces —",
+        "Cuando se une un prefijo terminado en -r a una voz con r- inicial, como en superrico.",
     ];
     for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
 
@@ -208,7 +218,14 @@ describe("headings", () => {
         expect(ids("Historia de la ciudad.")).toEqual([]);
     });
     test("numbers, abbreviations and ellipses are left alone", () => {
-        for (const heading of ["Capítulo 1. El comienzo", "Notas, etc.", "1.", "Y entonces..."])
+        for (const heading of [
+            "Capítulo 1. El comienzo",
+            "Notas, etc.",
+            "1.",
+            "Y entonces...",
+            "31. Pág., JJ. OO.",
+            "32. D., Ing.",
+        ])
             expect(ids(heading, true)).toEqual([]);
     });
 });
@@ -319,6 +336,12 @@ describe("phrases", () => {
 
 describe("false positives found in the vault", () => {
     const correct = [
+        // Wrong forms cited as such in notes on grammar
+        "Es váyanse o quédense, no ®váyasen ni ®quédesen.",
+        "Se deben evitar las formas con -r-: ®¡Comeros los macarrones!",
+        "El undécimo piso (ordinal), no X el onceavo piso.",
+        "Como en Se busca a los culpables (no Se buscan a los culpables).",
+        "Sin mí, para ti (no sin yo, para tú, opciones registradas en el habla popular).",
         "Las respuestas también las da el maestro.",
         "¿Podemos tratarlo de tú, maestro?",
         "• Randi, James (1980). Flim-Flam! (en inglés). Prometheus Books.",
@@ -378,6 +401,34 @@ describe("ranges", () => {
     });
 });
 
+describe("false positives of the whole vault", () => {
+    const correct = [
+        "aprovechamiento%20(%E2%80%A6)%20no%20necesiten y otras cosas",
+        "Louis-Auguste Cyparis, más conocido como Ludger Sylbaris, (1875? - 1929) fue un preso.",
+        "*Letras (Lima)*. 91.133, pp. 5-34.",
+        "Rvdmo.: reverendísimo (también Rmo.)",
+        "«Iraq Swears by Bomb Detector U.S. Sees as Useless». The New York Times.",
+    ];
+    for (const text of correct) test(text, () => expect(ids(text)).toEqual([]));
+    test("dashes in English keep their spacing", () =>
+        expect(
+            ids("«I think the sheer—the word he loved—colour has been so influential»."),
+        ).toEqual([]));
+    test("a question that ends in a number still needs its opening mark", () =>
+        expect(ids("Llegaste en 1999?")).toEqual(["RAE_APERTURA_INTERROGACION"]));
+    test("a heading keeps the capital of its second sentence", () =>
+        expect(sentenceCase("Política Y Ficción. Las Ideologías Sin Futuro")).toBe(
+            "Política y ficción. Las ideologías sin futuro",
+        ));
+});
+
+describe("forms cited as wrong", () => {
+    test("are only left alone when the text marks them", () => {
+        expect(ids("Se buscan a los culpables.")).toEqual(["RAE_SE_IMPERSONAL"]);
+        expect(ids("Vive en el onceavo piso.")).toEqual(["RAE_ORDINAL_PARTITIVO"]);
+    });
+});
+
 describe("thousands", () => {
     test("are separated by a space", () => {
         expect(fix("Costó 1,250,000 pesos.")).toBe(`Costó 1${NB}250${NB}000 pesos.`);
@@ -393,6 +444,10 @@ describe("thousands", () => {
         expect(ids("En 1998 había 3,5 millones; el código 28004; 6.10.2017; 3,500")).toEqual([]);
         expect(ids("La versión 3.100.1 salió; 2.5 kg; 15.06 h.")).toEqual([]);
         expect(ids(`Asistieron 20${NB}000 personas y 20 000 más.`)).toEqual([]);
+    });
+    test("identifiers keep their points", () => {
+        expect(ids("Nit UPB: 890.902.922-6. Todos los derechos reservados")).toEqual([]);
+        expect(ids("Su DNI 12.345.678 y su teléfono 600.123.456")).toEqual([]);
     });
 });
 

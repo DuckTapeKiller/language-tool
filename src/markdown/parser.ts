@@ -15,17 +15,25 @@ import * as api from "../api";
 
 const ESCAPE = /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g;
 
-/** A range of Obsidian syntax, and the text it belongs to, if any (see {@link Attach}) */
+/**
+ * A range of Obsidian syntax, the text it belongs to, if any (see {@link Attach}), and
+ * what it reads as, if anything
+ */
 export interface HiddenRange {
     from: number;
     to: number;
     attach?: Attach;
+    interpretAs?: string;
 }
 
 /**
  * Ranges of Obsidian syntax that is not prose and that the markdown parser does not know:
  * comments, callout markers, block IDs, tags, the "!" of embeds and the "==" of highlights.
  * Inline tokens take one neighbouring space with them, so no double space is left behind.
+ * A tag in the middle of a sentence reads as a neutral word instead, so the sentence
+ * still reads as one: «leí sobre #historia y #arte» is not «leí sobre y».
+ * Also hidden: the letter of a lettered list («b.» is no misspelling), and the brackets
+ * that restore letters inside a word, so «her[i]do» reads as «herido».
  */
 export function obsidianSyntax(text: string): HiddenRange[] {
     const ranges: HiddenRange[] = [];
@@ -44,7 +52,14 @@ export function obsidianSyntax(text: string): HiddenRange[] {
         ranges.push({ from: m.index, to: m.index + m[0].length, attach: "previous" });
     for (const m of text.matchAll(/(^|\s)(#(?=[\p{L}\p{N}_/-]*[\p{L}_/-])[\p{L}\p{N}_/-]+)/gmu)) {
         const start = m.index + m[1].length;
-        inline(start, start + m[2].length);
+        const end = start + m[2].length;
+        const lineEnd = text.indexOf("\n", end);
+        const before = text.slice(text.lastIndexOf("\n", start - 1) + 1, start).trim();
+        const after = text.slice(end, lineEnd < 0 ? text.length : lineEnd).trim();
+        const inSentence =
+            before && after && !/#[\p{L}\p{N}_/-]+$/u.test(before) && !after.startsWith("#");
+        if (inSentence) ranges.push({ from: start, to: end, interpretAs: "0" });
+        else inline(start, end);
     }
     for (const m of text.matchAll(/!(?=\[\[)/g))
         ranges.push({ from: m.index, to: m.index + 1, attach: "next" });
@@ -52,6 +67,17 @@ export function obsidianSyntax(text: string): HiddenRange[] {
         ranges.push({ from: m.index, to: m.index + 2, attach: "next" });
         const end = m.index + m[0].length;
         ranges.push({ from: end - 2, to: end, attach: "previous" });
+    }
+    for (const m of text.matchAll(/^((?:[ \t]*>)*[ \t]*)([A-Za-z][.)][ \t]+)(?=\S)/gm))
+        ranges.push({ from: m.index + m[1].length, to: m.index + m[0].length });
+    // Glued to a letter, and not a link, a wikilink or a reference
+    for (const m of text.matchAll(/\[\p{L}+\]/gu)) {
+        const end = m.index + m[0].length;
+        const before = text[m.index - 1] ?? "";
+        const after = text[end] ?? "";
+        if (!/\p{L}/u.test(before) && !/\p{L}/u.test(after)) continue;
+        if (/[[!]/.test(before) || /[\]([:]/.test(after)) continue;
+        ranges.push({ from: m.index, to: m.index + 1 }, { from: end - 1, to: end });
     }
     return ranges.sort((a, b) => a.from - b.from);
 }
@@ -94,21 +120,33 @@ export function formattingOf(text: string): string {
     };
     walk(parseMarkdown(mask(text, obsidianSyntax(text))));
     const markers = obsidianSyntax(text).map(r => text.slice(r.from, r.to).trim());
-    return JSON.stringify([types, markers]);
+    // Escapes too: removing the space of «( \ )» makes «\)», which hides the backslash
+    const escapes = text.match(ESCAPE)?.length ?? 0;
+    return JSON.stringify([types, markers, escapes]);
 }
 
-/** The ranges of italics in markdown, with their markers, and the marker of each */
-export function emphasisRanges(text: string): { from: number; to: number; marker: string }[] {
-    const ranges: { from: number; to: number; marker: string }[] = [];
+/** The ranges of the markdown elements of these types, with their markers */
+function elementRanges(text: string, types: readonly string[]): { from: number; to: number }[] {
+    const ranges: { from: number; to: number }[] = [];
     const walk = (node: RootContent | Root) => {
         const start = node.position?.start.offset;
         const end = node.position?.end.offset;
-        if (node.type === "emphasis" && start != null && end != null)
-            ranges.push({ from: start, to: end, marker: text[start] });
+        if (types.includes(node.type) && start != null && end != null)
+            ranges.push({ from: start, to: end });
         if ("children" in node) for (const child of node.children) walk(child);
     };
     walk(parseMarkdown(mask(text, obsidianSyntax(text))));
     return ranges;
+}
+
+/** The ranges of italics in markdown, with their markers, and the marker of each */
+export function emphasisRanges(text: string): { from: number; to: number; marker: string }[] {
+    return elementRanges(text, ["emphasis"]).map(r => ({ ...r, marker: text[r.from] }));
+}
+
+/** The ranges of bold, italics and strikethrough in markdown, with their markers */
+export function formattingRuns(text: string): { from: number; to: number }[] {
+    return elementRanges(text, ["strong", "emphasis", "delete"]);
 }
 
 export class SyntaxTree {
@@ -313,7 +351,10 @@ class AnnotationVisitor {
                 break;
             case "tableCell":
                 node.children.forEach(child => this.visitRoot(child));
-                this.output.pushMarkup("", "\n");
+                // Each cell reads as a paragraph of its own, so no sentence runs into the
+                // next cell («Sinónimo | Palabra» is not «Sinónima palabra»), while the row
+                // is still checked in one request: it has no "\n\n"
+                this.output.pushMarkup("", "\n \n");
                 break;
             case "thematicBreak":
                 this.output.pushMarkup(emptyMarkup(startOffset, endOffset), "\n\n");
@@ -350,9 +391,8 @@ function addText(text: string, output: AnnotatedText) {
 
 function addLines(text: string, parsed: string, output: AnnotatedText) {
     const [first, ...reminder] = text.replace(/\n$/, "").split("\n");
-    // The first parsed line is intentionally unused; only the remaining lines are compared.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- pfirst is needed to collect premider.
-    const [pfirst, ...premider] = parsed.replace(/\n$/, "").split("\n");
+    // Only the lines after the first are compared
+    const premider = parsed.replace(/\n$/, "").split("\n").slice(1);
 
     if (reminder.length !== premider.length) {
         console.error("Invalid number of lines", reminder.length, premider.length, text, parsed);
@@ -365,12 +405,8 @@ function addLines(text: string, parsed: string, output: AnnotatedText) {
         const line = reminder[i];
         const pline = premider[i];
 
-        let indent = line.length - pline.length;
-        // The match value is intentionally unused; each match represents one escape character.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- only the match count affects indent.
-        for (const m of line.matchAll(ESCAPE)) {
-            indent -= 1; // each escape character is one longer
-        }
+        // Each escape character is one longer
+        const indent = line.length - pline.length - (line.match(ESCAPE)?.length ?? 0);
         if (indent < 0) {
             console.error("Invalid indent", indent, line, pline);
             throw Error("Markdown parsing: invalid indent");

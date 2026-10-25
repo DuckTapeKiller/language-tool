@@ -210,7 +210,11 @@ function openTooltip(
     return { tooltip, range, byClick };
 }
 
-const showSuggestions = StateEffect.define<{ match: api.LTLint; range: api.LTRange }>();
+const showSuggestions = StateEffect.define<{
+    match: api.LTLint;
+    range: api.LTRange;
+    byClick?: boolean;
+}>();
 const hideSuggestions = StateEffect.define<null>();
 
 /** Field holding the open suggestions tooltip; created per plugin instance */
@@ -264,6 +268,22 @@ const hoverListener = ViewPlugin.fromClass(
             }, HOVER_TIME);
         }
 
+        /**
+         * A click opens the suggestions too when it leaves the cursor where it was, e.g. on
+         * an underline whose suggestions were just closed with Escape: such a click changes
+         * no selection, so the selection alone would not open them.
+         */
+        click(event: MouseEvent) {
+            if (event.button !== 0 || event.shiftKey || event.altKey || event.metaKey) return;
+            if (!this.view.state.selection.main.empty) return;
+            const pos = this.view.posAtCoords({ x: event.clientX, y: event.clientY });
+            const found = pos == null ? null : underlineAt(this.view.state, pos);
+            const open = this.open();
+            if (!found || (open && open.range.from === found.range.from)) return;
+            this.cancelOpen();
+            this.view.dispatch({ effects: showSuggestions.of({ ...found, byClick: true }) });
+        }
+
         cancelOpen() {
             window.clearTimeout(this.openTimer);
             this.pending = null;
@@ -294,6 +314,9 @@ const hoverListener = ViewPlugin.fromClass(
             mousemove(event) {
                 this.mousemove(event);
             },
+            click(event) {
+                this.click(event);
+            },
             mouseleave() {
                 this.cancelOpen();
                 this.scheduleClose();
@@ -313,7 +336,7 @@ function suggestions(plugin: LanguageToolPlugin): Extension {
             for (const e of tr.effects) {
                 if (e.is(hideSuggestions)) open = null;
                 if (e.is(showSuggestions))
-                    open = openTooltip(plugin, e.value.match, e.value.range, false);
+                    open = openTooltip(plugin, e.value.match, e.value.range, !!e.value.byClick);
             }
             if (tr.docChanged) return null;
             const selection = tr.state.selection;

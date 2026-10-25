@@ -209,6 +209,16 @@ const rules: Rule[] = [
         for (const m of numbers) {
             const number = m[1];
             const from = m.index + m[0].length - number.length;
+            // Identifiers keep their points: «NIT 890.902.922-6», «DNI 12.345.678», and so do
+            // a volume and issue before the pages: «Letras 91.133, pp. 5-34»
+            const before = text.slice(Math.max(0, from - 16), from);
+            if (
+                /^(?:-[\dA-Za-z]|,?\s*pp?\.\s)/.test(text.slice(from + number.length)) ||
+                /\b(?:NIT|NIF|CIF|RUT|RUC|DNI|CUIT|CUIL|ISBN|ISSN|tel|teléfono|fax)\.?[\s:º]*$/iu.test(
+                    before,
+                )
+            )
+                continue;
             const digits = number.replace(/[.,]/g, "");
             // Four digits take no separator; more are grouped by three from the right
             const fixed =
@@ -228,17 +238,19 @@ const rules: Rule[] = [
         }
         return found;
     },
-    // 40% → 40 %
+    // 40% → 40 %, but not in an address: «%E2%80%A6»
     text =>
-        [...text.matchAll(/(\d+)%/g)].map(m => ({
-            ruleId: "RAE_PORCENTAJE",
-            categoryId: "TYPOGRAPHY",
-            from: m.index,
-            to: m.index + m[0].length,
-            title: "Espacio ante el signo de porcentaje",
-            message: "El signo de porcentaje va separado de la cifra por un espacio.",
-            replacements: [`${m[1]}${THIN_SPACE}%`],
-        })),
+        [...text.matchAll(/(\d+)%/g)]
+            .filter(m => !inAddress(text, m.index))
+            .map(m => ({
+                ruleId: "RAE_PORCENTAJE",
+                categoryId: "TYPOGRAPHY",
+                from: m.index,
+                to: m.index + m[0].length,
+                title: "Espacio ante el signo de porcentaje",
+                message: "El signo de porcentaje va separado de la cifra por un espacio.",
+                replacements: [`${m[1]}${THIN_SPACE}%`],
+            })),
     // Octubre 30, 2020 → 30 de octubre de 2020
     text => {
         const months = MONTHS.join("|");
@@ -390,13 +402,20 @@ const rules: Rule[] = [
  * A title in sentence case: only the first word keeps its capital, and words that `keep`
  * says are proper names. Words in capitals, such as acronyms («ONU»), are left as they are.
  */
+/// Whether the position is in a web address or in text encoded for one
+function inAddress(text: string, at: number): boolean {
+    const word = /\S*$/.exec(text.slice(0, at))![0] + /^\S*/.exec(text.slice(at))![0];
+    return /:\/\/|www\.|%[0-9A-F]{2}/i.test(word);
+}
+
 export function sentenceCase(
     title: string,
     keep: (word: string, index: number) => boolean = () => false,
 ): string {
     let first = true;
     return title.replace(/\p{L}+/gu, (word, index: number) => {
-        if (first) {
+        // The first word, also of a second sentence: «Política y ficción. Las ideologías»
+        if (first || /[.?!…][»”"’]*\s+[«“"‘¿¡]*$/u.test(title.slice(0, index))) {
             first = false;
             return word;
         }
@@ -405,7 +424,23 @@ export function sentenceCase(
     });
 }
 
+/**
+ * Whether a text cites the form at `from` as wrong, as notes on grammar do: «no ®váyasen»,
+ * «no X el onceavo piso», «Se busca a los culpables (no Se buscan a los culpables)»
+ */
+function citedAsWrong(text: string, from: number): boolean {
+    const before = text.slice(Math.max(0, from - 300), from);
+    const line = before.slice(before.lastIndexOf("\n") + 1);
+    if (/[®⊗][\s¡¿«“"]*$/u.test(line)) return true;
+    if (/(?:^|[\s(])no\s+X\s+(?:\p{L}+\s+)?$/u.test(line)) return true;
+    const open = line.lastIndexOf("(");
+    return open >= 0 && !line.slice(open).includes(")") && /^\(no\s/u.test(line.slice(open));
+}
+
 /** Apply the rules to text in Spanish */
 export function spanishRules(text: string, context: Context): RuleMatch[] {
-    return rules.flatMap(rule => rule(text, context)).sort((a, b) => a.from - b.from);
+    return rules
+        .flatMap(rule => rule(text, context))
+        .filter(m => !citedAsWrong(text, m.from))
+        .sort((a, b) => a.from - b.from);
 }

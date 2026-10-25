@@ -79,6 +79,7 @@ const MERIDIEM =
     /(^|[^\p{L}\p{N}])(\d{1,2}(?:[:.]\d{2})?)[ \t]?([aApP])\.?[ \t]?[mM](\.|(?![\p{L}\p{N}]))/gu;
 /// Initials of a name: «J.L. González» → «J. L. González»
 const INITIALS = /(^|[^\p{L}\p{N}.])((?:\p{Lu}\.){2,})(?=[ \t]+\p{Lu}\p{Ll})/gu;
+const ENGLISH = new Set(["U.S.", "U.K.", "U.N.", "U.S.A."]);
 
 const MESSAGE =
     "Las abreviaturas de varias palabras llevan un espacio tras cada punto: «EE. UU.», «a. C.», «10 a. m.».";
@@ -128,6 +129,8 @@ export const abbreviationRule: Rule = text => {
     }
     for (const m of text.matchAll(INITIALS)) {
         const written = m[2];
+        // English abbreviations, as in a quoted title: «U.S. Sees as Useless»
+        if (ENGLISH.has(written)) continue;
         report(
             m.index + m[1].length,
             written,

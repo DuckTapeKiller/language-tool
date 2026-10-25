@@ -4,7 +4,7 @@
  * delimits an aside, which needs a raya at both ends.
  */
 
-import { ABBREVIATIONS, isUpper, lines, Rule, RuleMatch } from "./common";
+import { ABBREVIATIONS, FOREIGN, isUpper, lines, Rule, RuleMatch } from "./common";
 import { CLITICS, DICENDI } from "./dicendi";
 
 interface Dash {
@@ -208,14 +208,34 @@ function dialogueMatches(line: string): RuleMatch[] {
         });
     }
     // Then the narrator's comments, each opened and, if the character goes on, closed
+    let turn = 0;
     for (let k = 1; k < found.length; k++) {
+        const dash = found[k];
+        if (afterSentence(line, dash)) {
+            // Examples write a whole dialogue on one line: «—¿Tú? —También bien —respondió
+            // Silvia—». The dash is a new turn, unless the next one closes a comment that
+            // it opened: «—Bien. —Silvia notó que Juan se ruborizaba y dijo—: ¿Estás bien?»
+            const next = found[k + 1];
+            const closes = next && !isSpace(line[next.at - 1]) && next.at > 0;
+            turn = closes ? k - 1 : k;
+            if (!closes) continue;
+        }
         const match =
-            k % 2 === 1
-                ? narratorOpening(line, found[k], raya)
-                : narratorClosing(line, found[k], raya);
+            (k - turn) % 2 === 1
+                ? narratorOpening(line, dash, raya)
+                : narratorClosing(line, dash, raya);
         if (match) matches.push(match);
     }
     return matches;
+}
+
+/// A dash after the end of a sentence, joined to a capital that is no verb of saying
+function afterSentence(line: string, dash: Dash): boolean {
+    return (
+        /[.?!…»”"][ \t]+$/u.test(line.slice(0, dash.at)) &&
+        /^[\p{Lu}¿¡«“"]/u.test(line.slice(dash.at + 1)) &&
+        !saying(line, dash)
+    );
 }
 
 const ASIDE_MESSAGE =
@@ -254,6 +274,11 @@ function asideMatches(line: string): RuleMatch[] {
                 (!spaceBefore || (isSpace(line[close.at - 1]) && isWordChar(line[close.at + 1])))
             )
                 continue;
+            // English and French use their own dashes: «the sheer—the word he loved—colour»
+            if (FOREIGN.test(inner)) continue;
+            // Affixes cited between them: «un prefijo terminado en -r a una voz con r-»
+            const ends = [/^\p{L}+/u.exec(inner)?.[0], /\p{L}+$/u.exec(inner)?.[0]];
+            if (!rayas && ends.some(w => w?.length === 1 && !/[aeouy]/iu.test(w))) continue;
             // Dashes that separate clauses of a list: «está vivo — no está muerto; …»
             if (trimmed.includes(";")) continue;
             if (rayas && trimmed === inner && spaceBefore && spaceAfter) continue;
@@ -278,6 +303,7 @@ function asideMatches(line: string): RuleMatch[] {
         if (end < 0 || open.ch === "-" || (list && !isRaya(open.ch)) || !spaceBefore) continue;
         const inner = line.slice(open.at + 1, end).trim();
         if (!/\s/.test(inner) || /[»”")\]]/.test(inner) || !ASIDE_START.test(inner)) continue;
+        if (FOREIGN.test(inner)) continue;
         // Dialogue quoted in a paragraph: «Correcta: —¡No puedo oírte! —gritó Kismine»
         if (/^[¿¡]/u.test(inner)) continue;
         // A separator before an address: «Marsillach — palabravirtual.com»

@@ -263,6 +263,14 @@ describe.skipIf(!available)(`Title case in Spanish headings with ${server}`, () 
         ]);
     });
 
+    test("names LanguageTool does not know keep their capital too", async () => {
+        // «ayiti» and «saint-domingue» are no Spanish words, so they are names
+        const body = "Colón bautizó la isla La Española y siguió su viaje.";
+        expect(await headingFix("De Ayiti A La Española A Saint-Domingue", body)).toEqual([
+            "De Ayiti a La Española a Saint-Domingue",
+        ]);
+    });
+
     test("names alone are not title case", async () => {
         expect(await headingFix("Gabriel García Márquez")).toEqual([]);
     });
@@ -290,13 +298,114 @@ describe.skipIf(!available)(`Formatting kept with ${server}`, () => {
     }
 
     test("a suggestion that would change the emphasis is withheld", async () => {
+        // Without the space, «__Familia francesa___._» is no longer bold and italics
         const text =
-            "_**Demandante**_: _Familia francesa_ _._\n\nOtro párrafo en español para el contexto.";
+            "_**Demandante**_: __Familia francesa__ _._\n\nOtro párrafo en español para el contexto.";
         const lint = (await lintsFor(text)).find(l =>
             text.slice(l.range.from, l.range.to).includes("_."),
         );
         expect(lint).toBeDefined();
         expect(lint!.edits?.every(e => e === null)).toBeTrue();
+    });
+
+    test("a space removed between two runs of italics joins them", async () => {
+        const text =
+            "_**Demandante**_: _Familia francesa_ _._\n\nOtro párrafo en español para el contexto.";
+        const lint = (await lintsFor(text)).find(l =>
+            text.slice(l.range.from, l.range.to).includes("_."),
+        )!;
+        const change = suggestionChange(lint, lint.range, 0)!;
+        let out = text;
+        for (const c of [...change].sort((a, b) => b.from - a.from))
+            out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+        expect(out).toStartWith("_**Demandante**_: _Familia francesa._\n");
+    });
+
+    test("a quotation that is not closed is closed at the end, not doubled", async () => {
+        async function fixes(text: string): Promise<string[]> {
+            const lint = (await lintsFor(text)).find(l => /UNPAIRED/.test(l.ruleId))!;
+            expect(lint).toBeDefined();
+            return lint.replacements.map((_, i) => {
+                const change = suggestionChange(lint, lint.range, i)!;
+                let out = text;
+                for (const c of [...change].sort((a, b) => b.from - a.from))
+                    out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+                return out.trimEnd();
+            });
+        }
+        const question =
+            '"¿Qué puede ser más injusto que estas proscripciones generales que destruyen indiscriminadamente a aquellos a quienes los tiernos años o la enfermedad les hace incapaces de ofender? \n\nOtro párrafo en español.';
+        expect(await fixes(question)).toEqual([
+            question.replace("ofender? ", 'ofender?" ').trimEnd(),
+            question.slice(1).trimEnd(),
+        ]);
+        // The full stop goes after the closing sign
+        expect((await fixes("Dijo que «no vendría nunca a esta casa.\n"))[0]).toBe(
+            "Dijo que «no vendría nunca a esta casa».",
+        );
+        // Outside the bold if the sign is outside it, inside if it is inside
+        expect((await fixes('"**¿Por qué no vino nadie a la fiesta de anoche?**\n'))[0]).toBe(
+            '"**¿Por qué no vino nadie a la fiesta de anoche?**"',
+        );
+        expect((await fixes('**"¿Por qué no vino nadie a la fiesta de anoche?**\n'))[0]).toBe(
+            '**"¿Por qué no vino nadie a la fiesta de anoche?"**',
+        );
+        // In English, after the full stop
+        expect(
+            await fixes('The editor wrote that "nobody would ever read this book again.\n'),
+        ).toEqual(['The editor wrote that "nobody would ever read this book again."']);
+        expect(await fixes("Dijo que 'no vendría nunca a esta casa.\n")).toEqual([
+            "Dijo que 'no vendría nunca a esta casa'.",
+            "Dijo que no vendría nunca a esta casa.",
+        ]);
+        // Before a block ID
+        expect((await fixes('Dijo que "no vendría nunca a esta casa. ^abc123\n'))[0]).toBe(
+            'Dijo que "no vendría nunca a esta casa". ^abc123',
+        );
+        // A closing sign without its opening can only be removed
+        expect(await fixes("Esto se cierra sin haberlo abierto nunca».\n")).toEqual([
+            "Esto se cierra sin haberlo abierto nunca.",
+        ]);
+    });
+
+    test("a space that would make a line a list is withheld", async () => {
+        const text =
+            "Las notas de la edición.\n\n> 7.Por ejemplo, Bergantini publicó su obra en 1745.\n";
+        const lint = (await lintsFor(text)).find(l =>
+            text.slice(l.range.from, l.range.to).startsWith(".Por"),
+        );
+        expect(lint).toBeDefined();
+        expect(lint!.edits?.every(e => e === null)).toBeTrue();
+    });
+
+    test("a list item that starts with a sign is checked", async () => {
+        // A block starting with a bullet of no characters made LanguageTool fail
+        const text =
+            "Signos:\n\n- **0** : Marca usos que se deben evitar.\n- **[ ]** : Encierran pronunciaciones: [líbro].\n- **.** : En la división silábica de palabras, marca las fronteras entre sílabas: a.dhe.si.vo.\n";
+        await lintsFor(text);
+    });
+
+    test("a sentence does not run from one table cell into the next", async () => {
+        const text =
+            "| Término | Definición |\n| --- | --- |\n| Sinónimo | Palabra con significado similar a otra |\n| Antónimo | Palabra con significado opuesto a otra |\n";
+        const rules = (await lintsFor(text)).map(l => l.ruleId);
+        expect(rules.filter(r => r.startsWith("AGREEMENT"))).toEqual([]);
+    });
+
+    test("a word split across two bold runs is joined in one", async () => {
+        const text =
+            '"Vale la pena mencionar que en las décadas anteriores **el centro hizo millones en vacunas y otros tratamientos que en parte** **se** **desarroll** **aron** **utilizando chimpancés**".';
+        const lint = (await lintsFor(text)).find(l => l.replacements.includes("desarrollaron"))!;
+        expect(lint).toBeDefined();
+        const change = suggestionChange(
+            lint,
+            lint.range,
+            lint.replacements.indexOf("desarrollaron"),
+        )!;
+        let out = text;
+        for (const c of [...change].sort((a, b) => b.from - a.from))
+            out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+        expect(out).toContain("**se** **desarrollaron** **utilizando chimpancés**");
     });
 
     test("the space forgotten before bold is added outside it, first", async () => {

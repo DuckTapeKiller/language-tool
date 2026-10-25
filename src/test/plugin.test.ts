@@ -349,6 +349,14 @@ describe("suggestions keep the formatting", () => {
         expect(apply("Es **mui** bueno.", "**mui**", "muy")).toBe("Es **muy** bueno.");
     });
 
+    test("the quotation marks of a long quotation change without its bold", () => {
+        const inner =
+            "Creo que **las personas tienden a dormir mucho mejor cuando duermen solas por todo tipo de razones**... Una vez que superas el tipo de confort psicológico que te puede brindar compartir cama, la mayoría de las personas se benefician al tener un ambiente propio";
+        const source = `"${inner}", dice Handley.`;
+        const plainInner = inner.replaceAll("**", "");
+        expect(apply(source, `"${inner}"`, `«${plainInner}»`)).toBe(`«${inner}», dice Handley.`);
+    });
+
     test("a change next to a link keeps the link", () => {
         const source = "[Einstein](http://example.org/einstein)‘s theory";
         expect(apply(source, "Einstein](http://example.org/einstein)‘s", "Einstein’s")).toBe(
@@ -388,10 +396,58 @@ describe("Obsidian syntax", () => {
     });
 
     test("tags, block IDs and embeds are not checked", () => {
-        expect(checked("Texto #medios/bbc más texto.")).toBe("Texto más texto.");
         expect(checked("#etiqueta Texto.")).toBe("Texto.");
+        expect(checked("Texto al final #medios/bbc")).toBe("Texto al final");
+        expect(checked("#uno #dos #tres")).toBe("");
+        expect(checked("Una lista de etiquetas: #uno #dos")).toBe("Una lista de etiquetas:");
         expect(checked("Una frase con ID. ^abc-123")).toBe("Una frase con ID.");
         expect(checked("Una imagen ![[foto.png]] aquí.").includes("!")).toBeFalse();
+    });
+
+    test("a tag in the middle of a sentence reads as a neutral word", () => {
+        // Hidden, «con y y» would be a repeated word
+        expect(checked("Un texto con %%nota%% y #etiqueta y algo más.")).toBe(
+            "Un texto con y 0 y algo más.",
+        );
+        expect(checked("Leí sobre #historia y #arte en el museo.")).toBe(
+            "Leí sobre 0 y 0 en el museo.",
+        );
+        expect(checked("Texto #medios/bbc más texto.")).toBe("Texto 0 más texto.");
+    });
+
+    test("the letter of a lettered list is not checked", () => {
+        expect(checked("a. La primera.\n\nb. La segunda.")).toBe("La primera.\n\nLa segunda.");
+        expect(checked("> b. En la cita directa.")).toBe("En la cita directa.");
+        expect(checked("c) Otra opción.")).toBe("Otra opción.");
+        // Elsewhere it is text
+        expect(checked("La letra b. es la segunda.")).toBe("La letra b. es la segunda.");
+    });
+
+    test("brackets that restore letters read as the whole word", () => {
+        expect(checked("El her[i]do fue atendido.")).toBe("El herido fue atendido.");
+        expect(checked("La p[la]za de los S[agra]dos Corazones.")).toBe(
+            "La plaza de los Sagrados Corazones.",
+        );
+        expect(checked("[E]l texto.")).toBe("El texto.");
+        // Links, wikilinks, references and checkboxes keep their brackets
+        expect(obsidianSyntax("Su[biografía](https://example.org), [[nota]], [ver][ref]")).toEqual(
+            [],
+        );
+        expect(obsidianSyntax("- [x] hecho")).toEqual([]);
+    });
+
+    test("list items keep their bullet when each paragraph is checked alone", () => {
+        const { annotations } = new SyntaxTree(
+            "Obras:\n\n- Una obra – óleo sobre tela.\n- Otra obra – óleo.\n",
+        ).annotate(undefined);
+        annotations.optimize();
+        const parts = annotations.paragraphs();
+        expect(parts.map(p => p.plainText().text.trim())).toEqual([
+            "Obras:",
+            "• Una obra – óleo sobre tela.",
+            "• Otra obra – óleo.",
+        ]);
+        expect(parts.reduce((n, p) => n + p.length(), 0)).toBe(annotations.length());
     });
 
     test("headings, numbers and anchors are not tags", () => {
@@ -630,6 +686,9 @@ describe("formatting check", () => {
         expect(formattingOf("Es ==muy== cierto %%nota%%")).toBe(
             formattingOf("Es ==muy== cierto. %%nota%%"),
         );
+        // The backslash would escape the bracket and disappear
+        expect(formattingOf("contrabarra ( \\ ) y")).not.toBe(formattingOf("contrabarra ( \\) y"));
+        expect(formattingOf("El 90\\% de")).toBe(formattingOf("El 90 \\% de"));
     });
 });
 
@@ -652,6 +711,18 @@ describe("results of a check while the note is edited", () => {
         expect(t.edited({ from: 20, to: 30 })).toBe(true);
         expect(t.edited({ from: 0, to: 10 })).toBe(false);
         expect(t.map({ from: 30, to: 35 })).toEqual({ from: 29, to: 34 });
+        t.stop();
+    });
+    test("are dropped when the editor opens another note", () => {
+        const view = { state: { doc: { length: 40 } } };
+        const t = new ChangeTracker(view as unknown as EditorView);
+        expect(t.replaced()).toBe(false);
+        // Obsidian replaces the state, without changes
+        view.state = { doc: { length: 110 } };
+        expect(t.replaced()).toBe(true);
+        // Edits to the new note do not reach the old check
+        t.add(ChangeSet.of({ from: 0, insert: "x" }, 110));
+        expect(t.replaced()).toBe(true);
         t.stop();
     });
     test("follow several edits in turn", () => {
