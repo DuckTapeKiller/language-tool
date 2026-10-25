@@ -378,10 +378,12 @@ const rules: Rule[] = [
             if (depth > 0) continue;
             const open = ch === "“" || (ch === '"' && (i === 0 || /[\s([—¿¡]/u.test(text[i - 1])));
             if (!open) continue;
-            const close = text.indexOf(ch === "“" ? "”" : '"', i + 1);
+            // Copied text mixes them: «“cita"», «"cita”»
+            const ends = [text.indexOf("”", i + 1), text.indexOf('"', i + 1)].filter(e => e >= 0);
+            const close = ends.length ? Math.min(...ends) : -1;
             if (close < 0 || text.slice(i + 1, close).includes("\n")) continue;
             const inner = text.slice(i + 1, close);
-            if (!inner.trim() || /[«»]/.test(inner)) continue;
+            if (!inner.trim() || /[«»]/.test(inner.replace(/«[^«»]*»/g, ""))) continue;
             found.push({
                 ruleId: "RAE_COMILLAS_ANGULARES",
                 categoryId: "STYLE",
@@ -390,7 +392,9 @@ const rules: Rule[] = [
                 title: "Comillas angulares",
                 message:
                     "En español se usan primero las comillas angulares (« »); las inglesas (“ ”) van dentro de ellas, y las simples (‘ ’) en último lugar.",
-                replacements: [`«${inner}»`],
+                // Joined to the words: «" El libro "» → «El libro», and what was quoted inside
+                // goes down a level: «"el «campo» del señor"» → «el “campo” del señor»
+                replacements: [`«${inner.trim().replace(/«([^«»]*)»/g, "“$1”")}»`],
             });
             i = close;
         }

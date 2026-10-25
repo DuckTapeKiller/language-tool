@@ -210,6 +210,36 @@ export class AnnotatedText {
     }
 
     /**
+     * The checked text of the range with a space where markup that reads as nothing joins
+     * two words: «la**ciudadd**» → «la ciudadd». Null if there is no such markup, if it marks
+     * a letter or two inside a word («hue**s**e**c**ito»), or if LanguageTool's best
+     * suggestion shows a single word: «ciu**dadd**» → «ciudad» changes only «dadd».
+     */
+    splitAtMarkup(from: number, to: number, best?: string): string | null {
+        const range = this.rangeChars(from, to);
+        if (!range) return null;
+        const text = range.chars.map(c => c.ch).join("");
+        const word = /[\p{L}\p{N}]/u;
+        const cuts = [...range.gaps.keys()]
+            .filter(k => k > 0 && k < text.length && word.test(text[k - 1]) && word.test(text[k]))
+            .sort((a, b) => a - b);
+        if (!cuts.length) return null;
+        const bounds = [0, ...cuts, text.length];
+        if (bounds.some((b, i) => i > 0 && b - bounds[i - 1] < 2)) return null;
+        // A suggestion that changes letters inside one piece, without removing it whole
+        const withinPiece = (h: { from: number; to: number }) =>
+            bounds.some(
+                (b, i) =>
+                    i > 0 &&
+                    bounds[i - 1] <= h.from &&
+                    h.to <= b &&
+                    !(h.from === bounds[i - 1] && h.to === b && h.from < h.to),
+            );
+        if (best !== undefined && diff(text, best).every(withinPiece)) return null;
+        return cuts.reduceRight((t, k) => t.slice(0, k) + " " + t.slice(k), text);
+    }
+
+    /**
      * Whether a suggestion only adds spaces where formatting markers sit, as in «y aseguró»
      * for «y**aseguró**»: a space forgotten next to a marker is a common slip.
      */
@@ -223,7 +253,18 @@ export class AnnotatedText {
         );
     }
 
-    safeEdits(from: number, to: number, replacement: string): TextEdit[] | null {
+    /**
+     * The changes that turn the text between `from` and `to` into `replacement` without
+     * touching markup, or null if there are none. With the note it was taken from, at
+     * `base`, a change may go around bold or italic markers in its way.
+     */
+    safeEdits(
+        from: number,
+        to: number,
+        replacement: string,
+        source?: string,
+        base = 0,
+    ): TextEdit[] | null {
         const range = this.rangeChars(from, to);
         if (!range) return null;
         const { chars, gaps } = range;
@@ -251,17 +292,42 @@ export class AnnotatedText {
                 edits.push({ from: at - from, to: at - from, insert: hunk.insert });
                 continue;
             }
-            // Every changed character must be text, without markup in between
+            // Every changed character must be text. Formatting markers between them stay,
+            // and the change is made around them: «"** **El» → «**«El»
+            const runs: { from: number; to: number; text: string }[] = [];
             for (let i = 0; i < changed.length; i++) {
-                const raw = changed[i].raw;
+                const { ch, raw } = changed[i];
                 if (raw === null) return null;
-                if (i > 0 && raw !== changed[i - 1].raw! + 1) return null;
+                const run = runs.at(-1);
+                if (run && raw === run.to) {
+                    run.to++;
+                    run.text += ch;
+                    continue;
+                }
+                const gap = gaps.get(hunk.from + i) ?? [];
+                const markers = (g: { from: number; to: number }) =>
+                    /^[*_~=]+$/.test(source?.slice(base + g.from, base + g.to) ?? "");
+                if (run && !(gap.length && gap.every(markers))) return null;
+                runs.push({ from: raw, to: raw + 1, text: ch });
             }
-            edits.push({
-                from: changed[0].raw! - from,
-                to: changed[changed.length - 1].raw! + 1 - from,
-                insert: hunk.insert,
-            });
+            // What is inserted replaces the text, and the runs of spaces around it go. Only
+            // spaces go on the far side of a marker, or a run would be emptied: «de _de_»
+            const main = Math.max(
+                0,
+                runs.findIndex(r => r.text.trim()),
+            );
+            if (
+                runs.length > 1 &&
+                (!hunk.insert || runs.some((r, k) => k !== main && r.text.trim()))
+            )
+                return null;
+            runs.forEach((run, k) =>
+                edits.push({
+                    from: run.from - from,
+                    to: run.to - from,
+                    insert: k === main ? hunk.insert : "",
+                }),
+            );
         }
         return edits;
     }

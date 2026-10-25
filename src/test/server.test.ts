@@ -385,6 +385,77 @@ describe.skipIf(!available)(`Formatting kept with ${server}`, () => {
         await lintsFor(text);
     });
 
+    // The note after the first suggestion of the match on `word` is applied
+    async function applyFirst(text: string, word: string): Promise<string> {
+        const lint = (await lintsFor(text)).find(l =>
+            text.slice(l.range.from, l.range.to).includes(word),
+        )!;
+        expect(lint).toBeDefined();
+        const change = suggestionChange(lint, lint.range, 0)!;
+        expect(change).not.toBeNull();
+        let out = text;
+        for (const c of [...change].sort((a, b) => b.from - a.from))
+            out = out.slice(0, c.from) + c.insert + out.slice(c.to);
+        return out;
+    }
+
+    test("quotation marks split into runs of bold become angular in one run", async () => {
+        const text =
+            '**"** **El Descubrimiento de Europa** **"** **es un libro que cambia nociones.**\n';
+        expect(await applyFirst(text, "Descubrimiento")).toBe(
+            "**«El Descubrimiento de Europa»** **es un libro que cambia nociones.**\n",
+        );
+    });
+
+    test("a repeated word in italics is not deleted across the markers", async () => {
+        // Deleting the second «de» would empty its italics and pair the markers anew
+        const text =
+            "Formas antiguas como _dacá (de _de_ + _acá_) o _deste_ (de _de_ + _este_) ya no se usan en la lengua.\n";
+        for (const lint of (await lintsFor(text)).filter(
+            l => l.ruleId === "SPANISH_WORD_REPEAT_RULE",
+        ))
+            expect(lint.edits?.every(e => e === null)).toBeTrue();
+    });
+
+    test("a misspelling glued to bold gets its space first", async () => {
+        const text = "Durante el verano visitamos la**ciudadd** antigua con toda mi familia.\n";
+        const spaced = await applyFirst(text, "ciudadd");
+        expect(spaced).toBe(
+            "Durante el verano visitamos la **ciudadd** antigua con toda mi familia.\n",
+        );
+        expect(await applyFirst(spaced, "ciudadd")).toBe(
+            "Durante el verano visitamos la **ciudad** antigua con toda mi familia.\n",
+        );
+    });
+
+    test("a line break, a reference and a soft hyphen do not hide a misspelling", async () => {
+        expect(
+            await applyFirst(
+                "Durante el verano visitamos la ciudadd<br>de piedra con mi familia.\n",
+                "ciudadd",
+            ),
+        ).toBe("Durante el verano visitamos la ciudad<br>de piedra con mi familia.\n");
+        expect(
+            await applyFirst(
+                "Durante el verano visitamos la ciudadd&nbsp;de piedra con mi familia.\n",
+                "ciudadd",
+            ),
+        ).toBe("Durante el verano visitamos la ciudad&nbsp;de piedra con mi familia.\n");
+        const soft = "Durante el verano visitamos la ciu\u00addad de piedra con toda mi familia.\n";
+        expect((await lintsFor(soft)).filter(l => l.ruleId.startsWith("MORFOLOGIK"))).toEqual([]);
+    });
+
+    test("each suggestion knows the language its paragraph was checked in", async () => {
+        const text =
+            "Durante el verano visitamos la ciudadd antigua con toda mi familia.\n\nWe visited the old citty with all my family last summer.\n";
+        const languages = (await lintsFor(text)).map(l => [
+            text.slice(l.range.from, l.range.to),
+            l.language,
+        ]);
+        expect(languages).toContainEqual(["ciudadd", "es"]);
+        expect(languages.find(([word]) => word === "citty")?.[1]).toStartWith("en");
+    });
+
     test("a sentence does not run from one table cell into the next", async () => {
         const text =
             "| Término | Definición |\n| --- | --- |\n| Sinónimo | Palabra con significado similar a otra |\n| Antónimo | Palabra con significado opuesto a otra |\n";

@@ -6,6 +6,7 @@ import { gfmFromMarkdown } from "mdast-util-gfm";
 import { frontmatter } from "micromark-extension-frontmatter";
 import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 import { math } from "micromark-extension-math";
+import { decodeString } from "micromark-util-decode-string";
 import { mathFromMarkdown } from "mdast-util-math";
 
 import { AnnotatedText, Attach } from "../annotated";
@@ -13,7 +14,9 @@ import { wikiLink } from "./micromark-wikilink";
 import { wikiLinkFromMarkdown } from "./mdast-wikilink";
 import * as api from "../api";
 
-const ESCAPE = /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g;
+/// A backslash escape or a character reference such as «&nbsp;» or «&#8212;»
+const ESCAPE_OR_REFERENCE =
+    /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#\d{1,7}|#[xX][\dA-Fa-f]{1,6}|[A-Za-z][A-Za-z\d]{1,31});/g;
 
 /**
  * A range of Obsidian syntax, the text it belongs to, if any (see {@link Attach}), and
@@ -32,8 +35,8 @@ export interface HiddenRange {
  * Inline tokens take one neighbouring space with them, so no double space is left behind.
  * A tag in the middle of a sentence reads as a neutral word instead, so the sentence
  * still reads as one: «leí sobre #historia y #arte» is not «leí sobre y».
- * Also hidden: the letter of a lettered list («b.» is no misspelling), and the brackets
- * that restore letters inside a word, so «her[i]do» reads as «herido».
+ * Also hidden: soft hyphens, the letter of a lettered list («b.» is no misspelling), and
+ * the brackets that restore letters inside a word, so «her[i]do» reads as «herido».
  */
 export function obsidianSyntax(text: string): HiddenRange[] {
     const ranges: HiddenRange[] = [];
@@ -68,6 +71,8 @@ export function obsidianSyntax(text: string): HiddenRange[] {
         const end = m.index + m[0].length;
         ranges.push({ from: end - 2, to: end, attach: "previous" });
     }
+    // A soft hyphen, invisible, reads as nothing: «ciu\u00addad» is «ciudad»
+    for (const m of text.matchAll(/\u00ad/g)) ranges.push({ from: m.index, to: m.index + 1 });
     for (const m of text.matchAll(/^((?:[ \t]*>)*[ \t]*)([A-Za-z][.)][ \t]+)(?=\S)/gm))
         ranges.push({ from: m.index + m[1].length, to: m.index + m[0].length });
     // Glued to a letter, and not a link, a wikilink or a reference
@@ -120,8 +125,11 @@ export function formattingOf(text: string): string {
     };
     walk(parseMarkdown(mask(text, obsidianSyntax(text))));
     const markers = obsidianSyntax(text).map(r => text.slice(r.from, r.to).trim());
-    // Escapes too: removing the space of «( \ )» makes «\)», which hides the backslash
-    const escapes = text.match(ESCAPE)?.length ?? 0;
+    // Escapes and references too: removing the space of «( \ )» makes «\)», which hides
+    // the backslash
+    const escapes = [...text.matchAll(ESCAPE_OR_REFERENCE)].filter(
+        m => decodeString(m[0]) !== m[0],
+    ).length;
     return JSON.stringify([types, markers, escapes]);
 }
 
@@ -286,10 +294,16 @@ class AnnotationVisitor {
                 );
                 this.offset = endOffset;
                 break;
+            case "html":
+                // A line break reads as one: «ciudad<br>de» is two words
+                if (/^<br\s*\/?>$/i.test(node.value)) {
+                    this.output.pushMarkup(emptyMarkup(startOffset, endOffset), "\n");
+                    this.offset = endOffset;
+                }
+                break;
             case "yaml":
             case "code":
             case "math":
-            case "html":
             case "image":
             case "imageReference":
             case "footnoteReference":
@@ -373,18 +387,17 @@ class AnnotationVisitor {
 
 /// Adds text to the output, handling escape characters
 function addText(text: string, output: AnnotatedText) {
-    // There are probably escape characters
-    // It is not really clear why mdast did remove the escape nodes, but here we are
-
-    // Find escapes
+    // mdast removes escapes and decodes character references, which are markup standing for
+    // the character, so no edit can split them: «\\*», «&nbsp;»
     let offset = 0;
-    for (const match of text.matchAll(ESCAPE)) {
+    for (const match of text.matchAll(ESCAPE_OR_REFERENCE)) {
         const start = match.index;
-        // Could span over multiple lines
+        const decoded = decodeString(match[0]);
+        // An unknown reference stays as written
+        if (decoded === match[0]) continue;
         output.pushText(text.slice(offset, start));
-        // The escape is markup standing for the escaped character, so no edit can split it
-        output.pushMarkup(text.slice(start, start + 2), text.slice(start + 1, start + 2));
-        offset = start + 2;
+        output.pushMarkup(match[0], decoded);
+        offset = start + match[0].length;
     }
     output.pushText(text.slice(offset));
 }
@@ -405,8 +418,10 @@ function addLines(text: string, parsed: string, output: AnnotatedText) {
         const line = reminder[i];
         const pline = premider[i];
 
-        // Each escape character is one longer
-        const indent = line.length - pline.length - (line.match(ESCAPE)?.length ?? 0);
+        // Escapes and character references are longer than what they stand for
+        let indent = line.length - pline.length;
+        for (const m of line.matchAll(ESCAPE_OR_REFERENCE))
+            indent -= m[0].length - decodeString(m[0]).length;
         if (indent < 0) {
             console.error("Invalid indent", indent, line, pline);
             throw Error("Markdown parsing: invalid indent");

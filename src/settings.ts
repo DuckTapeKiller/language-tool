@@ -638,7 +638,7 @@ export class LTSettingsTab extends PluginSettingTab {
                     frag.createEl("br");
                     frag.createEl("a", {
                         text: "Click here for information about premium access",
-                        href: "https://github.com/DuckTapeKiller/language-tool#premium-accounts",
+                        href: "https://github.com/DuckTapeKiller/language-tool-advanced#premium-accounts",
                         attr: { target: "_blank" },
                     });
                 }),

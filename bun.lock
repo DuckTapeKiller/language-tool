@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "obsidian-languagetool",
+      "name": "language-tool-advanced",
       "dependencies": {
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.43.13",
@@ -15,6 +15,7 @@
         "micromark-extension-frontmatter": "^2.0.0",
         "micromark-extension-gfm": "^3.0.0",
         "micromark-extension-math": "^3.1.0",
+        "micromark-util-decode-string": "^2.0.1",
         "micromark-util-types": "^2.0.3",
         "obsidian": "^1.13.1",
       },

@@ -22,6 +22,8 @@ export interface LTMatch {
     edits?: (TextEdit[] | null)[];
     categoryId: string;
     ruleId: string;
+    /// The language the text was checked in, as LanguageTool reports it: «es», «en-GB»
+    language?: string;
 }
 
 export interface LTRange {
@@ -176,16 +178,24 @@ export async function check(
         // mistake, so the suggestion that only adds it comes first
         const suggestions = jsonPathA<string>("$.replacements[*].value@string()", match);
         const split = suggestions.filter(r => annotated.splitsAtMarkup(from, to, r));
-        const replacements = [...split, ...suggestions.filter(r => !split.includes(r))];
+        let replacements = [...split, ...suggestions.filter(r => !split.includes(r))];
+        // A misspelling made of two words joined by markup, «la**ciudadd**»: the space goes
+        // first, and suggestions that would rewrite letters across the markup do not apply
+        const categoryId = jsonPath<string>("$.rule.category.id@string()", match);
+        const ruleId = jsonPath<string>("$.rule.id@string()", match);
+        const glued = isSpelling(categoryId, ruleId)
+            ? annotated.splitAtMarkup(from, to, suggestions[0])
+            : null;
+        if (glued) replacements = [glued, ...split.filter(r => r !== glued)];
         return {
             range: { from: offset + from, to: offset + to },
             text,
             title: jsonPath<string>("$.shortMessage@string()", match),
             message: jsonPath<string>("$.message@string()", match),
             replacements,
-            edits: replacements.map(r => annotated.safeEdits(from, to, r)),
-            categoryId: jsonPath<string>("$.rule.category.id@string()", match),
-            ruleId: jsonPath<string>("$.rule.id@string()", match),
+            edits: replacements.map(r => annotated.safeEdits(from, to, r, source, offset)),
+            categoryId,
+            ruleId,
         };
     });
 
@@ -195,7 +205,8 @@ export async function check(
         const all = withSpanishLints(options, offset, annotated, result, source);
         result = await keepProperNames(options, apiKey, detected, offset, annotated, all, source);
     }
-    return source ? withheldIfFormattingChanges(source, result) : result;
+    const checked = source ? withheldIfFormattingChanges(source, result) : result;
+    return checked.map(lint => ({ ...lint, language: detected }));
 }
 
 /// The sign that closes each opening sign
@@ -278,11 +289,13 @@ function withheldIfFormattingChanges(source: string, lints: LTLint[]): LTLint[] 
         const at = from - start;
         const edits = lint.edits.map(edits => {
             if (!edits) return edits;
-            if (formattingOf(applyEdits(paragraph, at, edits)) === before) return edits;
+            // Runs that a removed space separated become one, rather than «**a****b**»
             const joined = joinRuns(paragraph, at, edits);
-            if (!joined) return null;
-            const changed = applyEdits(paragraph, at, joined.edits);
-            return formattingOf(changed) === formattingOf(joined.reference) ? joined.edits : null;
+            if (joined) {
+                const changed = applyEdits(paragraph, at, joined.edits);
+                if (formattingOf(changed) === formattingOf(joined.reference)) return joined.edits;
+            }
+            return formattingOf(applyEdits(paragraph, at, edits)) === before ? edits : null;
         });
         return { ...lint, edits };
     });
@@ -327,12 +340,15 @@ function joinRuns(
     at: number,
     edits: readonly TextEdit[],
 ): { edits: TextEdit[]; reference: string } | null {
+    const deletesSpace = (e: TextEdit) =>
+        !e.insert && /^\s+$/.test(text.slice(at + e.from, at + e.to));
+    if (!edits.some(deletesSpace)) return null;
     const runs = formattingRuns(text);
     const joins: { from: number; to: number }[] = [];
     const joined = edits.map(e => {
         const from = at + e.from;
         const to = at + e.to;
-        if (e.insert || !/^\s+$/.test(text.slice(from, to))) return e;
+        if (!deletesSpace(e)) return e;
         // The closing marker before the space, and the same opening marker after it
         const marker = /([*_~])\1*$/.exec(text.slice(0, from))?.[0];
         if (!marker || !text.startsWith(marker, to) || text[to + marker.length] === marker[0])
@@ -418,12 +434,14 @@ async function keepProperNames(
         result.push({
             ...lint,
             replacements: [fixed],
-            edits: [annotated.safeEdits(from, to, fixed)],
+            edits: [annotated.safeEdits(from, to, fixed, source, offset)],
         });
     }
     return result;
 }
 
+/// Rules that fix quotation marks together with their spacing
+const QUOTES_RULES = new Set(["RAE_COMILLAS_ANGULARES"]);
 /// Categories of LanguageTool matches that a more complete RAE match may replace
 const REPLACEABLE = new Set(["CASING", "TYPOGRAPHY", "PUNCTUATION"]);
 
@@ -613,7 +631,7 @@ function withSpanishLints(
             ...m,
             from,
             to: last + 1,
-            edits: m.replacements.map(r => annotated.safeEdits(from, last + 1, r)),
+            edits: m.replacements.map(r => annotated.safeEdits(from, last + 1, r, source, offset)),
         });
     }
 
@@ -627,7 +645,10 @@ function withSpanishLints(
         // unless it is a casing, typography or punctuation match the rule covers completely.
         // Spelling and grammar inside, e.g. inside a quotation, are always kept.
         const overlapping = found.filter(l => l.range.from < range.to && l.range.to > range.from);
-        if (overlapping.some(l => l.range.from < range.from || l.range.to > range.to)) continue;
+        // The spacing of quotation marks goes with them: «" El libro " es» → ««El libro» es»
+        const partial = overlapping.filter(l => l.range.from < range.from || l.range.to > range.to);
+        const spacing = (l: LTLint) => QUOTES_RULES.has(m.ruleId) && REPLACEABLE.has(l.categoryId);
+        if (partial.some(l => !spacing(l))) continue;
         // LanguageTool already reports it, with the same fix
         const same = (l: LTLint) =>
             l.range.from === range.from &&

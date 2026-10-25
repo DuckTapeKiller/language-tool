@@ -33,6 +33,43 @@ function changesFor(view: EditorView, pick: (underline: api.LTLint) => string | 
     return nonOverlapping(found);
 }
 
+/// LanguageTool's mark: its letters take the colour of the text, its wave stays blue
+const LOGO_LETTERS = ["M3 2h6v20h11v6H3z", "M17 2h17v6h-5.5v20h-6V8H17z"];
+const LOGO_WAVE = "M3 36c2.5-6 6-6 8.5 0s6 6 8.5 0 6-6 8.5 0";
+
+/** The language the text was checked in, under LanguageTool's mark: «ES» */
+function languageBadge(parent: HTMLElement, language: string) {
+    let name = language;
+    try {
+        name = new Intl.DisplayNames(["en"], { type: "language" }).of(language) ?? language;
+    } catch {
+        // A code the system does not know is shown as it is
+    }
+    parent.createDiv(
+        { cls: "lt-language", attr: { "aria-label": `Checked as ${name}` } },
+        badge => {
+            badge.createSvg(
+                "svg",
+                { attr: { viewBox: "0 0 36 40", width: 18, height: 20, "aria-hidden": "true" } },
+                svg => {
+                    for (const d of LOGO_LETTERS)
+                        svg.createSvg("path", { attr: { d, fill: "currentColor" } });
+                    svg.createSvg("path", {
+                        cls: "lt-language-wave",
+                        attr: {
+                            d: LOGO_WAVE,
+                            fill: "none",
+                            "stroke-width": 4,
+                            "stroke-linecap": "round",
+                        },
+                    });
+                },
+            );
+            badge.createSpan({ text: language.split("-")[0].toUpperCase() });
+        },
+    );
+}
+
 function createTooltip(
     plugin: LanguageToolPlugin,
     view: EditorView,
@@ -45,6 +82,7 @@ function createTooltip(
     const categoryClass = categoryCssClass(category, ruleId);
 
     return createDiv({ cls: ["lt-tooltip", categoryClass] }, root => {
+        if (match.language) languageBadge(root, match.language);
         if (match.title) root.createSpan({ cls: "lt-title", text: match.title });
         if (match.message) root.createSpan({ cls: "lt-message", text: match.message });
 
@@ -395,6 +433,22 @@ export const baseTheme = EditorView.baseTheme({
             fontSize: "var(--font-ui-small)",
             width: "300px",
             lineHeight: 1.5,
+            // Floats in the top corner, so the title and the message flow around it
+            "& > .lt-language": {
+                float: "right",
+                margin: "0 12px 2px 8px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "2px",
+                "& > svg": { display: "block" },
+                "& > span": {
+                    fontSize: "11px",
+                    fontWeight: "var(--font-semibold)",
+                    letterSpacing: "0.04em",
+                    lineHeight: 1,
+                },
+            },
             "& > .lt-title": {
                 display: "block",
                 fontWeight: 600,

@@ -31,5 +31,5 @@ await Bun.build({
     sourcemap: false,
     external: externals,
     naming: "main.js",
-    banner: `/* Language Tool v${version} */`,
+    banner: `/* Language Tool Advanced v${version} */`,
 });

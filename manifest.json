@@ -1,9 +1,9 @@
 {
   "id": "language-tool",
-  "name": "Language Tool",
+  "name": "Language Tool Advanced",
   "version": "1.0.0",
   "minAppVersion": "1.13.6",
-  "description": "Spelling and grammar checking with LanguageTool, on your own server or LanguageTool's.",
+  "description": "Spelling, grammar and Spanish style checking with LanguageTool, on your own server or LanguageTool's.",
   "author": "DuckTapeKiller",
   "authorUrl": "https://github.com/DuckTapeKiller",
   "isDesktopOnly": false

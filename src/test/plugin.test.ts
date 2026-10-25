@@ -450,6 +450,19 @@ describe("Obsidian syntax", () => {
         expect(parts.reduce((n, p) => n + p.length(), 0)).toBe(annotations.length());
     });
 
+    test("character references and line breaks read as what they stand for", () => {
+        expect(checked("Uno &amp; dos.\nTres &nbsp;cuatro &#8212; cinco.")).toBe(
+            "Uno & dos.\nTres \u00a0cuatro — cinco.",
+        );
+        expect(checked("Una ciudad<br>de piedra.")).toBe("Una ciudad\nde piedra.");
+        // An unknown reference stays as written
+        expect(checked("Uno &foo; dos.")).toBe("Uno &foo; dos.");
+    });
+
+    test("a soft hyphen reads as nothing", () => {
+        expect(checked("La ciu\u00addad antigua.")).toBe("La ciudad antigua.");
+    });
+
     test("headings, numbers and anchors are not tags", () => {
         expect(obsidianSyntax("# Título")).toEqual([]);
         expect(obsidianSyntax("El número #1 de la lista")).toEqual([]);

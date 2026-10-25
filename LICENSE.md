@@ -1,7 +1,7 @@
-Language Tool, spelling and grammar checking for Obsidian with LanguageTool
+Language Tool Advanced, spelling and grammar checking for Obsidian with LanguageTool
 Copyright (C) 2026 DuckTapeKiller
 
-Language Tool is a modified version of obsidian-languagetool
+Language Tool Advanced is a modified version of obsidian-languagetool
 (https://github.com/wrenger/obsidian-languagetool) by Lars Wrenger, which is
 itself a fork of obsidian-languagetool-plugin
 (https://github.com/Clemens-E/obsidian-languagetool-plugin) by Clemens Ertle,

@@ -422,6 +422,26 @@ describe("false positives of the whole vault", () => {
         ));
 });
 
+describe("quotation marks", () => {
+    test("go angular, joined to the words, also when mixed or spaced", () => {
+        expect(fix('Leímos " El libro de la selva " en verano.')).toBe(
+            "Leímos «El libro de la selva» en verano.",
+        );
+        expect(fix('Leímos “El libro de la selva" en verano.')).toBe(
+            "Leímos «El libro de la selva» en verano.",
+        );
+        expect(fix('Leímos "El libro de la selva” en verano.')).toBe(
+            "Leímos «El libro de la selva» en verano.",
+        );
+    });
+    test("what was quoted inside goes down a level", () =>
+        expect(fix('Roux. "el «campo del señor», que alimenta al personal del templo".')).toBe(
+            "Roux. «el “campo del señor”, que alimenta al personal del templo».",
+        ));
+    test("inside angular ones they stay", () =>
+        expect(ids("«Antonio me dijo: “Vaya ‘cacharro’ se ha comprado Julián”».")).toEqual([]));
+});
+
 describe("forms cited as wrong", () => {
     test("are only left alone when the text marks them", () => {
         expect(ids("Se buscan a los culpables.")).toEqual(["RAE_SE_IMPERSONAL"]);

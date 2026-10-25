@@ -2,6 +2,13 @@
     --lt-minor: #e9b35f;
     --lt-major: #da615c;
     --lt-style: #8981f3;
+    --lt-logo-wave: #5b5bff;
+}
+.theme-dark {
+    --lt-logo-wave: #8585ff;
+}
+.lt-language-wave {
+    stroke: var(--lt-logo-wave);
 }
 .lt-minor {
     --lt-highlight: var(--lt-minor);
