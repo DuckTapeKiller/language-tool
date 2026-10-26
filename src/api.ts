@@ -24,6 +24,10 @@ export interface LTMatch {
     ruleId: string;
     /// The language the text was checked in, as LanguageTool reports it: «es», «en-GB»
     language?: string;
+    /// Synonyms: how many of the replacements belong to each meaning, in order
+    groups?: number[];
+    /// Synonyms: a note for each replacement, e.g. «figurado», or null
+    notes?: (string | null)[];
 }
 
 export interface LTRange {
@@ -756,16 +760,28 @@ export async function wordsDel(
     }
 }
 
+/** A synonym, with what the thesaurus notes about it, e.g. «figurado» */
+export interface Synonym {
+    term: string;
+    note?: string;
+}
+
 export interface SynonymApi {
     name: string;
-    url: string;
-    query: (sentence: string, selection: { from: number; to: number }) => Promise<string[]>;
+    /// Answered on this computer, by the synonyms server in the settings
+    local?: boolean;
+    /** Synonyms of the selected word in its sentence, one list per meaning */
+    query: (
+        sentence: string,
+        selection: { from: number; to: number },
+        localServer: string,
+    ) => Promise<Synonym[][]>;
 }
 
 class SynonymEn implements SynonymApi {
     name = "English";
     url = "https://qb-grammar-en.languagetool.org/phrasal-paraphraser/subscribe";
-    async query(sentence: string, selection: { from: number; to: number }): Promise<string[]> {
+    async query(sentence: string, selection: { from: number; to: number }): Promise<Synonym[][]> {
         const index = sentence.slice(0, selection.from).split(/\s+/).length;
         const word = sentence.slice(selection.from, selection.to);
 
@@ -789,36 +805,92 @@ class SynonymEn implements SynonymApi {
                     body: JSON.stringify(request),
                 })
             ).json as JsonValue;
-            return jsonPathA<string>("$.data.suggestions[*][*]@string()", res);
+            const terms = jsonPathA<string>("$.data.suggestions[*][*]@string()", res);
+            return [terms.map(term => ({ term }))];
         } catch (e) {
             throw new Error(`Requesting synonyms failed\n${errorMessage(e)}`, { cause: e });
         }
     }
 }
 
-class SynonymDe implements SynonymApi {
-    name = "Deutsch";
-    url = "https://synonyms.languagetool.org/synonyms/de";
-    async query(sentence: string, selection: { from: number; to: number }): Promise<string[]> {
-        const word = sentence.slice(selection.from, selection.to).trim();
-        const before = sentence.slice(0, selection.from).split(/\s+/).join("+");
-        const after = sentence.slice(selection.to).split(/\s+/).join("+");
+/**
+ * Services that answer like LanguageTool's synonyms server: one synset per meaning.
+ * German is LanguageTool's own; Spanish is the plugin's synonym engine on this computer
+ * (src/synonyms/engine.ts), which also puts each synonym in the form of the word.
+ */
+class SynsetApi implements SynonymApi {
+    constructor(
+        readonly name: string,
+        private readonly url: (localServer: string) => string,
+        readonly local = false,
+    ) {}
 
+    async query(
+        sentence: string,
+        selection: { from: number; to: number },
+        localServer: string,
+    ): Promise<Synonym[][]> {
+        const word = sentence.slice(selection.from, selection.to).trim();
+        const before = sentence.slice(0, selection.from).trim().split(/\s+/).join("+");
+        const after = sentence.slice(selection.to).trim().split(/\s+/).join("+");
+        const base = this.url(localServer.trim().replace(/\/+$/, ""));
+
+        let res: JsonValue;
         try {
-            const res = (
+            res = (
                 await requestUrlChecked({
-                    url: sUrl(`${this.url}/${word}`, { before, after }).href,
+                    url: sUrl(`${base}/${encodeURIComponent(word)}`, { before, after }).href,
                     method: "GET",
                 })
             ).json as JsonValue;
-            return jsonPathA<string>("$.synsets[*].terms[*].term@string()", res);
         } catch (e) {
+            if (this.local)
+                throw new Error(`The synonym engine did not answer.\n${errorMessage(e)}`, {
+                    cause: e,
+                });
             throw new Error(`Requesting synonyms failed\n${errorMessage(e)}`, { cause: e });
         }
+        return jsonPathA<JsonValue>("$.synsets[*]", res).map(synset =>
+            jsonPathA<JsonValue>("$.terms[*]", synset).map(term => {
+                const note = jsonPathA<string>("$.note@string()", term)[0];
+                const found: Synonym = { term: jsonPath<string>("$.term@string()", term) };
+                if (note) found.note = note;
+                return found;
+            }),
+        );
     }
 }
 
-export const SYNONYMS: { [key: string]: SynonymApi } = { en: new SynonymEn(), de: new SynonymDe() };
+export const SYNONYMS: { [key: string]: SynonymApi } = {
+    en: new SynonymEn(),
+    de: new SynsetApi("Deutsch", () => "https://synonyms.languagetool.org/synonyms/de"),
+    es: new SynsetApi("Español", server => `${server}/synonyms/es`, true),
+};
+
+/**
+ * The language LanguageTool detects in a text, as a base code («es», «en»),
+ * or the language set in the settings when it is not detected automatically
+ */
+export async function detectLanguage(
+    options: Readonly<LTOptions>,
+    apiKey: string | null,
+    text: string,
+): Promise<string> {
+    const fixed = resolveLanguage(options);
+    if (fixed !== "auto") return baseLanguageCodes([fixed])[0];
+    const params = checkParams(options, apiKey, JSON.stringify({ annotation: [{ text }] }));
+    const res = await requestUrlChecked({
+        url: `${options.serverUrl}/v2/check`,
+        method: "POST",
+        body: new URLSearchParams(params).toString(),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+        },
+    });
+    const code = jsonPath<string>("$.language.code@string()", res.json as JsonValue);
+    return baseLanguageCodes([code])[0];
+}
 
 async function requestUrlChecked(request: RequestUrlParam): Promise<RequestUrlResponse> {
     let response: RequestUrlResponse;

@@ -3,6 +3,7 @@ import {
     debounce,
     Modal,
     Notice,
+    Platform,
     PluginSettingTab,
     SecretComponent,
     Setting,
@@ -281,7 +282,12 @@ export interface LTOptions {
     /// With automatic checking, also check a whole note when it is opened
     checkOnOpen: boolean;
     autoCheckDelay: number;
+    /// "" (off), "auto" (the language of the text) or a language code with a synonym service
     synonyms: string;
+    /// Java for the Spanish synonym engine; empty finds it automatically
+    synonymsJava: string;
+    /// LanguageTool installation whose Spanish dictionaries the engine reads; empty finds it
+    synonymsLanguageTool: string;
 
     motherTongue: string;
     staticLanguage: string;
@@ -320,6 +326,8 @@ export const DEFAULT_SETTINGS: LTOptions = {
     shouldAutoCheck: false,
     checkOnOpen: true,
     synonyms: "",
+    synonymsJava: "",
+    synonymsLanguageTool: "",
     motherTongue: "",
     staticLanguage: "",
     preferredLanguages: [],
@@ -632,8 +640,14 @@ export class LTSettingsTab extends PluginSettingTab {
                 name: "Find synonyms",
                 desc: createFragment(frag => {
                     frag.appendText(
-                        "Synonyms are looked up on LanguageTool's own servers, even when you use your own server. " +
-                            "The sentence around the selected word is sent with the request.",
+                        "Select a word and use the synonyms command or the context menu. " +
+                            "Automatic follows the language of the paragraph. " +
+                            "Spanish synonyms are found on this computer: the plugin starts its own synonym engine, " +
+                            "which uses Java and the Spanish dictionaries of your LanguageTool installation to put " +
+                            "each synonym in the form of the word (casas, viviendas). The Spanish thesaurus (1.5 MB) " +
+                            "is downloaded the first time. " +
+                            "English and German synonyms are looked up on LanguageTool's own servers, " +
+                            "with the sentence around the word.",
                     );
                     frag.createEl("br");
                     frag.createEl("a", {
@@ -647,9 +661,28 @@ export class LTSettingsTab extends PluginSettingTab {
                     key: "synonyms",
                     options: Object.fromEntries([
                         ["", "Disabled"],
+                        ["auto", "Automatic (language of the paragraph)"],
                         ...Object.entries(api.SYNONYMS).map(([k, v]) => [k, v?.name]),
                     ]) as Record<string, string>,
                 },
+            },
+            {
+                name: "Java for Spanish synonyms",
+                desc: "Java 17 or later, the program or its folder. Leave it empty to find it automatically.",
+                control: { type: "text", key: "synonymsJava", placeholder: "Found automatically" },
+                visible: () =>
+                    Platform.isDesktop && ["auto", "es"].includes(settings.options.synonyms),
+            },
+            {
+                name: "LanguageTool folder for Spanish synonyms",
+                desc: "The folder with languagetool-server.jar. Leave it empty to find it automatically.",
+                control: {
+                    type: "text",
+                    key: "synonymsLanguageTool",
+                    placeholder: "Found automatically",
+                },
+                visible: () =>
+                    Platform.isDesktop && ["auto", "es"].includes(settings.options.synonyms),
             },
             {
                 type: "group",

@@ -24,6 +24,7 @@ Language Tool Advanced underlines spelling, grammar and style mistakes as you wr
 - **Fixes that keep your formatting.** Bold, italics, links, footnotes and comments around a mistake stay where they are. A fix that would break them is shown, but cannot be applied.
 - **Made for messy Markdown.** Words split across runs of bold, quotation marks inside bold, character references, soft hyphens and words glued to markup are all checked and fixed properly.
 - **Checked as you open and as you type.** A note is checked as soon as it is shown in editing view, and every paragraph you edit is checked again a moment after you stop typing.
+- **Spanish synonyms in the right form.** Select «casas» and get «viviendas, domicilios»; select «corrió» and get «anduvo, se apresuró». Found on your computer, one row per meaning.
 - **Private if you want it.** With your own LanguageTool server, your notes never leave your computer.
 
 ## Contents
@@ -33,6 +34,7 @@ Language Tool Advanced underlines spelling, grammar and style mistakes as you wr
 - [Using it](#using-it)
 - [Languages](#languages)
 - [Spanish and the RAE](#spanish-and-the-rae)
+- [Synonyms](#synonyms)
 - [Markdown and Obsidian syntax](#markdown-and-obsidian-syntax)
 - [Settings for one note](#settings-for-one-note)
 - [Settings](#settings)
@@ -44,6 +46,8 @@ Language Tool Advanced underlines spelling, grammar and style mistakes as you wr
 ## Installation
 
 Language Tool Advanced is not in Obsidian's community plugin list yet. Install it in one of these ways.
+
+It works in Obsidian on a computer (macOS, Windows and Linux), not on phones or tablets.
 
 ### From a release
 
@@ -131,7 +135,7 @@ Search for "Language Tool Advanced" in the command palette, or give the commands
 | Jump to next suggestion | Selects the next underline after the cursor. |
 | Accept suggestion 1 to 8 | Applies that fix of the underline at the cursor. |
 | Add to dictionary | Adds the misspelled word at the cursor to your dictionary. |
-| Show synonyms | Shows synonyms for the selected word, in English or German. |
+| Show synonyms | Shows synonyms for the selected word, one row per meaning. See [Synonyms](#synonyms). |
 
 The right-click menu also offers the fixes of the underline you clicked.
 
@@ -222,6 +226,30 @@ The rules leave alone what the norm accepts, and much that only looks like a mis
 
 Headings are put in sentence case, but proper names keep their capital: words LanguageTool only knows with a capital («Cartagena»), words it does not know at all («Ayiti»), words the note writes with a capital in the middle of a sentence, acronyms, and the first word of a second sentence. Where LanguageTool already reports the same mistake with the same fix, only one underline is shown. Any rule can be turned off with "Disable rule".
 
+## Synonyms
+
+Select a word, then choose "Synonyms" in the right-click menu or run "Show synonyms". The synonyms open under the word, one row per meaning; click one to put it in place of the word, and Cmd+Z (Ctrl+Z) undoes it. A note such as *figurado* or *poco usado* shows when you hover a synonym. Turn them on with "Find synonyms"; "Automatic" uses the language of the paragraph.
+
+**Spanish synonyms are found on your computer.** The plugin brings its own synonym engine, a small Java program, and starts it in the background the first time you ask for Spanish synonyms. It puts every synonym in the form of the word you selected, reading the sentence around it:
+
+| You select | You get |
+|---|---|
+| Las **casas** son grandes | viviendas, domicilios, residencias… |
+| El perro **corrió** rápido | anduvo, pasó, aceleró, se apresuró… |
+| Yo **tenía** miedo | debía, me comprometía, me obligaba… |
+| Las casas del pueblo son **grandes** | desmedidas, considerables, extraordinarias… |
+
+Antonyms, words missing from the RAE's dictionary, misspellings in the thesaurus and synonyms for names are left out.
+
+What it needs:
+
+- **Java 17 or later**, and **a LanguageTool installation**, the same one your own server runs from: the engine reads its Spanish dictionaries. Both are found automatically (Homebrew, `JAVA_HOME`, `/opt/languagetool`…), or set them under "Java for Spanish synonyms" and "LanguageTool folder for Spanish synonyms".
+- **The Spanish thesaurus**, OpenThesaurus Español (LGPL 2.1), which the plugin downloads once from the [RLA-ES project](https://github.com/sbosio/rla-es) (1.5 MB), checks, and keeps in its own folder.
+
+The engine answers in a millisecond or two; the first request of a session waits about a second while it starts. It uses about 350 MB of memory while it runs, and stops after 15 minutes without a request or when Obsidian closes.
+
+**English and German synonyms** come from LanguageTool's servers, which receive the sentence around the word.
+
 ## Markdown and Obsidian syntax
 
 Only the prose of a note is checked. Left out are code and code blocks, maths, comments (`%%…%%`), tags, callout markers, block IDs, embeds, HTML tags, frontmatter, footnote markers and the addresses of links. Inline code, maths and a tag in the middle of a sentence read as a neutral word, so the sentence around them is still checked as one. Each table cell is read as a paragraph of its own, and the letter of a lettered list («b.») is not taken for a misspelling.
@@ -271,7 +299,8 @@ With "Inject property types" on, Obsidian knows the type of each of these proper
 | Auto check text | Checks the paragraphs you edit as you type. |
 | Check notes when opened | With automatic checking on, checks the whole note when it is first shown in editing view. |
 | Auto check delay | How long to wait after you stop typing before checking. |
-| Find synonyms | Turns on synonyms for English or German, which always come from LanguageTool's servers. |
+| Find synonyms | Turns on synonyms: automatic, by the language of the paragraph, or always English, German or Spanish. |
+| Java for Spanish synonyms, LanguageTool folder for Spanish synonyms | Where the Spanish synonym engine finds Java and LanguageTool's dictionaries, when they are not found automatically. |
 | Static language | Checks every note in one language instead of detecting it. |
 | Preferred languages | The languages you write in, and what to do with text in others. |
 | Detect the language of each paragraph | Checks every paragraph in its own language. Your own server only. |
@@ -288,7 +317,7 @@ With "Inject property types" on, Obsidian knows the type of each of these proper
 
 ## Privacy
 
-With LanguageTool's public or Premium server, the text you check is sent to LanguageTool. With your own server, nothing leaves your computer. Synonyms are the one exception: "Show synonyms" always asks LanguageTool's servers, and sends the sentence around the selected word.
+With LanguageTool's public or Premium server, the text you check is sent to LanguageTool. With your own server, nothing leaves your computer. Spanish synonyms are found on your computer too; the only download is the thesaurus, once, from GitHub. English and German synonyms are the exception: they come from LanguageTool's servers, which receive the sentence around the selected word.
 
 ## Troubleshooting
 
@@ -308,7 +337,8 @@ With LanguageTool's public or Premium server, the text you check is sent to Lang
 
 - `bun run build` runs Obsidian's official ESLint plugin, [eslint-plugin-obsidianmd](https://github.com/obsidianmd/eslint-plugin), on every source file, script, test and `package.json`, and stops at the first warning. It then type-checks and builds `main.js`.
 - `bun run lint` runs the linter on its own.
-- `bun test` runs the tests. Those in `src/test/server.test.ts` need a LanguageTool server at `http://localhost:8081`, or the one given in `LT_SERVER`, and are skipped when none is reachable.
+- `bun test` runs the tests. Those in `src/test/server.test.ts` need a LanguageTool server at `http://localhost:8081`, or the one given in `LT_SERVER`, and are skipped when none is reachable. Those in `src/test/synonyms.test.ts` run the Spanish synonym engine and are skipped without Java and LanguageTool.
+- The synonym engine's Java source is in `engine/`. After changing it, `scripts/build-engine.sh` compiles it and embeds it in `src/synonyms/engine-jar.ts`, which ships inside `main.js`. `engine/test/vault_test.py` checks the grammatical form of every synonym it gives for the words of a vault.
 
 Please report problems with Language Tool Advanced in this repository, not to LanguageTool or to the authors of the original plugin.
 

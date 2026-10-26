@@ -1,6 +1,6 @@
 {
   "name": "language-tool-advanced",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Spelling, grammar and Spanish style checking with LanguageTool, on your own server or LanguageTool's.",
   "main": "main.js",
   "type": "module",

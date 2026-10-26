@@ -7,9 +7,30 @@ import * as Bun from "bun";
  */
 class Stub {}
 
+class Notice {
+    hide() {}
+}
+
+// The plugin uses window.setTimeout, as Obsidian asks; Bun has no window
+(self as unknown as { window: typeof self }).window = self;
+
+/** The operating system, as Obsidian's Platform reports it */
+const system = (() => {
+    try {
+        return Bun.spawnSync(["uname"]).stdout.toString().trim();
+    } catch {
+        return "Windows";
+    }
+})();
+
+/** Only the type is used: tests subclass it with an adapter over a temporary folder */
+class FileSystemAdapter {}
+
 await mock.module("obsidian", () => ({
+    FileSystemAdapter,
+    Platform: { isDesktop: true, isMacOS: system === "Darwin", isWin: system === "Windows" },
     Modal: Stub,
-    Notice: Stub,
+    Notice,
     PluginSettingTab: Stub,
     SecretComponent: Stub,
     Setting: Stub,
@@ -25,13 +46,14 @@ await mock.module("obsidian", () => ({
             body: request.body,
             headers: request.headers,
         });
-        const text = await res.text();
+        const arrayBuffer = await res.arrayBuffer();
+        const text = new TextDecoder().decode(arrayBuffer);
         let json: unknown = null;
         try {
             json = JSON.parse(text);
         } catch {
             // Not every response is JSON, e.g. error messages
         }
-        return { status: res.status, text, json };
+        return { status: res.status, text, json, arrayBuffer };
     },
 }));

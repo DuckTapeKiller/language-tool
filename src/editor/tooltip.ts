@@ -1,9 +1,17 @@
-import { EditorView, Tooltip, ViewPlugin, keymap, showTooltip, tooltips } from "@codemirror/view";
+import {
+    EditorView,
+    Tooltip,
+    ViewPlugin,
+    ViewUpdate,
+    keymap,
+    showTooltip,
+    tooltips,
+} from "@codemirror/view";
 import { EditorState, Extension, StateEffect, StateField } from "@codemirror/state";
 import { categoryCssClass, isSpelling, nonOverlapping, suggestionChange } from "../helpers";
 import { ButtonComponent, setIcon } from "obsidian";
 import { default as LanguageToolPlugin } from "../main";
-import { clearUnderlinesInRange, underlineDecoration } from "./underlines";
+import { clearMatchingUnderlines, clearUnderlinesInRange, underlineDecoration } from "./underlines";
 import * as api from "../api";
 import { SUGGESTIONS } from "../settings";
 
@@ -76,7 +84,10 @@ function createTooltip(
     match: api.LTMatch,
     range: api.LTRange,
 ): HTMLElement {
-    const replacements = match.replacements.slice(0, SUGGESTIONS / 2);
+    // Synonyms show every meaning; LanguageTool's suggestions only the first few
+    const replacements = match.groups
+        ? match.replacements
+        : match.replacements.slice(0, SUGGESTIONS / 2);
     const category = match.categoryId;
     const ruleId = match.ruleId;
     const categoryClass = categoryCssClass(category, ruleId);
@@ -87,27 +98,35 @@ function createTooltip(
         if (match.message) root.createSpan({ cls: "lt-message", text: match.message });
 
         root.createDiv({ cls: "lt-bottom" }, bottom => {
-            bottom.createDiv({ cls: "lt-buttoncontainer" }, container => {
-                replacements.forEach((btnText, index) => {
-                    const button = new ButtonComponent(container);
-                    button.setButtonText(btnText || "(delete)");
-                    const change = suggestionChange(match, range, index);
-                    if (!change) {
-                        // Applying it would remove markup, e.g. an emphasis marker or a link
-                        button.setDisabled(true);
-                        button.setTooltip("Would change the formatting, edit it by hand");
-                        return;
-                    }
-                    button.onClick(() => {
-                        view.dispatch({
-                            changes: change,
-                            effects: [clearUnderlinesInRange.of(range)],
+            // Synonyms come in one row per meaning
+            const rows = match.groups ?? [replacements.length];
+            let index = 0;
+            for (const size of rows) {
+                bottom.createDiv({ cls: "lt-buttoncontainer" }, container => {
+                    for (const end = index + size; index < end; index++) {
+                        const btnText = replacements[index];
+                        const button = new ButtonComponent(container);
+                        button.setButtonText(btnText || "(delete)");
+                        const note = match.notes?.[index];
+                        if (note) button.setTooltip(note);
+                        const change = suggestionChange(match, range, index);
+                        if (!change) {
+                            // Applying it would remove markup, e.g. an emphasis marker or a link
+                            button.setDisabled(true);
+                            button.setTooltip("Would change the formatting, edit it by hand");
+                            continue;
+                        }
+                        button.onClick(() => {
+                            view.dispatch({
+                                changes: change,
+                                effects: [clearUnderlinesInRange.of(range)],
+                            });
+                            // The button took the focus; give it back, so typing and undo work
+                            view.focus();
                         });
-                        // The button took the focus; give it back, so typing and undo work
-                        view.focus();
-                    });
+                    }
                 });
-            });
+            }
         });
 
         // The plugin's own rules have one mechanical fix, so all of them can be applied
@@ -218,6 +237,7 @@ function underlineAt(
 
 interface OpenTooltip {
     tooltip: Tooltip;
+    match: api.LTLint;
     range: api.LTRange;
     /// Opened by clicking, which keeps it open while the cursor stays on the underline
     byClick: boolean;
@@ -245,7 +265,7 @@ function openTooltip(
             return { dom: host };
         },
     };
-    return { tooltip, range, byClick };
+    return { tooltip, match, range, byClick };
 }
 
 const showSuggestions = StateEffect.define<{
@@ -254,6 +274,11 @@ const showSuggestions = StateEffect.define<{
     byClick?: boolean;
 }>();
 const hideSuggestions = StateEffect.define<null>();
+
+/** Open the suggestions of an underline, as if it had been clicked */
+export function openSuggestions(match: api.LTLint): StateEffect<unknown> {
+    return showSuggestions.of({ match, range: match.range, byClick: true });
+}
 
 /** Field holding the open suggestions tooltip; created per plugin instance */
 let suggestionsField: StateField<OpenTooltip | null> | null = null;
@@ -270,6 +295,23 @@ const hoverListener = ViewPlugin.fromClass(
         pending: number | null = null;
 
         constructor(readonly view: EditorView) {}
+
+        /**
+         * Synonyms are underlined only while they are shown: closing them without picking
+         * one takes the underline away again
+         */
+        update(update: ViewUpdate) {
+            if (!suggestionsField) return;
+            const before = update.startState.field(suggestionsField, false);
+            const after = update.state.field(suggestionsField, false);
+            if (!before || before === after || before.match.ruleId !== "SYNONYMS") return;
+            if (after && after.match === before.match) return;
+            const closed = before.match;
+            // A view cannot be updated while it is being updated
+            window.setTimeout(() => {
+                this.view.dispatch({ effects: [clearMatchingUnderlines.of(u => u === closed)] });
+            }, 0);
+        }
 
         open(): OpenTooltip | null {
             return suggestionsField
@@ -462,6 +504,12 @@ export const baseTheme = EditorView.baseTheme({
                 minHeight: "10px",
                 padding: "0 12px",
                 position: "relative",
+                maxHeight: "320px",
+                overflowY: "auto",
+                "& > .lt-buttoncontainer + .lt-buttoncontainer": {
+                    borderTop: "1px solid var(--background-modifier-border)",
+                    marginTop: "6px",
+                },
                 "& > .lt-buttoncontainer": {
                     "&:not(:empty)": { paddingTop: "10px" },
                     "& > button": {

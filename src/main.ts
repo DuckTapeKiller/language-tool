@@ -37,6 +37,8 @@ import {
 } from "./helpers";
 import * as markdown from "./markdown/parser";
 import { applyNoteSettings } from "./noteSettings";
+import { openSuggestions } from "./editor/tooltip";
+import { SynonymEngine } from "./synonyms/engine";
 
 export default class LanguageToolPlugin extends Plugin {
     public settings: LTSettings;
@@ -47,6 +49,8 @@ export default class LanguageToolPlugin extends Plugin {
 
     public logs: string[] = [];
     private settingTab: LTSettingsTab;
+    /// Spanish synonyms, found by a Java program the plugin starts when they are first asked for
+    private synonymEngine?: SynonymEngine;
 
     // Used to temporarily disable auto-checking errors
     public autoCheckSuppressErrorsUntil: number = 0;
@@ -71,6 +75,15 @@ export default class LanguageToolPlugin extends Plugin {
 
         // Editor functionality
         this.registerEditorExtension(underlineExtension(this));
+
+        this.synonymEngine = new SynonymEngine(
+            this.app.vault.adapter,
+            this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
+            () => ({
+                java: this.settings.options.synonymsJava,
+                languageTool: this.settings.options.synonymsLanguageTool,
+            }),
+        );
 
         // Commands
         this.registerCommands();
@@ -138,6 +151,7 @@ export default class LanguageToolPlugin extends Plugin {
     public onunload() {
         this.logs = [];
         this.runningChecks = 0;
+        this.synonymEngine?.stop();
     }
 
     // Configure frontmatter suggestions
@@ -431,10 +445,8 @@ export default class LanguageToolPlugin extends Plugin {
     }
 
     private showSynonyms(editor: Editor, checking: boolean = false): boolean {
-        if (!this.settings.options.synonyms || !(this.settings.options.synonyms in api.SYNONYMS))
-            return false;
-        const synonyms = api.SYNONYMS[this.settings.options.synonyms];
-        if (!synonyms) return false;
+        const choice = this.settings.options.synonyms;
+        if (!choice || (choice !== "auto" && !(choice in api.SYNONYMS))) return false;
 
         // @ts-expect-error, not typed
         const editorView = editor.cm as EditorView;
@@ -461,29 +473,79 @@ export default class LanguageToolPlugin extends Plugin {
         const suffix = sentence.indexOf(".");
         if (suffix !== -1) sentence = sentence.slice(0, suffix + 1);
 
-        synonyms.query(sentence, sel).then(
-            replacements =>
-                editorView.dispatch({
-                    effects: [
-                        addUnderline.of({
-                            text: word,
-                            range: selection,
-                            title: "Synonyms",
-                            message: "",
-                            categoryId: "SYNONYMS",
-                            ruleId: "SYNONYMS",
-                            replacements,
-                        }),
-                    ],
-                }),
-            e => {
-                const err = e as Error;
-                console.error(err);
-                this.pushLogs(err);
-                new Notice(err.message, 30000);
-            },
-        );
+        const range = { from: selection.from, to: selection.to };
+        this.lookUpSynonyms(editorView, word, range, sentence, sel, line.text).catch(e => {
+            const err = e as Error;
+            console.error(err);
+            this.pushLogs(err);
+            new Notice(err.message, 30000);
+        });
         return true;
+    }
+
+    /**
+     * Find the synonyms of a word in the language of its paragraph and open them under it,
+     * one row per meaning
+     */
+    private async lookUpSynonyms(
+        view: EditorView,
+        word: string,
+        range: api.LTRange,
+        sentence: string,
+        selection: api.LTRange,
+        paragraph: string,
+    ) {
+        const options = this.getFileSettings(this.app.workspace.getActiveFile());
+        const language =
+            options.synonyms === "auto"
+                ? await api.detectLanguage(options, this.settings.getApiKey(), paragraph)
+                : options.synonyms;
+        const synonyms = api.SYNONYMS[language];
+        if (!synonyms) {
+            new Notice(`There are no synonyms for ${languageName(language)}.`);
+            return;
+        }
+        const groups = (await this.querySynonyms(synonyms, sentence, selection)).filter(
+            group => group.length,
+        );
+        // The word may have changed while the synonyms were on their way
+        if (view.state.sliceDoc(range.from, range.to) !== word) return;
+        if (!groups.length) {
+            new Notice(`No synonyms found for "${word}".`);
+            return;
+        }
+        const all = groups.flat();
+        const lint: api.LTLint = {
+            text: word,
+            range,
+            title: "Synonyms",
+            message: "",
+            categoryId: "SYNONYMS",
+            ruleId: "SYNONYMS",
+            language,
+            replacements: all.map(s => s.term),
+            notes: all.map(s => s.note ?? null),
+            groups: groups.map(group => group.length),
+        };
+        view.dispatch({ effects: [addUnderline.of(lint)] });
+        // Open them at once, as if the new underline had been clicked
+        view.dispatch({ effects: [openSuggestions(lint)] });
+    }
+
+    /** Ask a synonym service; the local engine is started first, and restarted once if it fails */
+    private async querySynonyms(
+        synonyms: api.SynonymApi,
+        sentence: string,
+        selection: api.LTRange,
+    ): Promise<api.Synonym[][]> {
+        const engine = this.synonymEngine;
+        if (!synonyms.local || !engine) return synonyms.query(sentence, selection, "");
+        try {
+            return await synonyms.query(sentence, selection, await engine.url());
+        } catch {
+            engine.stop();
+            return synonyms.query(sentence, selection, await engine.url());
+        }
     }
 
     /** Mark a check as finished; the status bar shows ready once no other check is running */
@@ -784,4 +846,13 @@ function singleMatchAtCursor(editor: Editor, minReplacements: number = 1): api.L
     const underline = matches[0];
     const preconditions = underline && underline.replacements.length >= minReplacements;
     return preconditions ? underline : undefined;
+}
+
+/** «es» → «Spanish» */
+function languageName(code: string): string {
+    try {
+        return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+    } catch {
+        return code;
+    }
 }

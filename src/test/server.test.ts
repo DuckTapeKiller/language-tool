@@ -493,3 +493,26 @@ describe.skipIf(!available)(`Formatting kept with ${server}`, () => {
         expect(out).toContain("experimentos y **aseguró que la organización** **estaba");
     });
 });
+
+describe.skipIf(!available)(`Language of a paragraph on ${server}`, () => {
+    const options: LTOptions = {
+        ...DEFAULT_SETTINGS,
+        endpoint: "custom",
+        serverUrl: server,
+        preferredLanguages: ["en", "es"],
+    };
+
+    test("is detected when the language is automatic", async () => {
+        expect(await api.detectLanguage(options, null, "Las casas son grandes y bonitas.")).toBe(
+            "es",
+        );
+        expect(await api.detectLanguage(options, null, "The houses are big and pretty.")).toBe(
+            "en",
+        );
+    });
+
+    test("is the static language when one is set", async () => {
+        const fixed = { ...options, staticLanguage: "de" };
+        expect(await api.detectLanguage(fixed, null, "Las casas son grandes.")).toBe("de");
+    });
+});
